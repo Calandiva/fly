@@ -50,9 +50,22 @@ var App = (function () {
 
   /* ── 알림음 ───────────────────────────────────────────────── */
   var actx = null, nearSet = Object.create(null);
+
+  /* iOS 는 사용자 제스처 밖에서 만든 AudioContext 를 정지 상태로 두고,
+     제스처 밖의 resume() 도 거부한다. 알림음은 제스처가 아닌 곳에서
+     울리므로 시작 버튼을 누르는 그 순간에 미리 열어 둬야 한다. */
+  function primeAudio() {
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      if (!actx) actx = new AC();
+      if (actx.state === 'suspended') actx.resume();
+    } catch (e) {}
+  }
+
   function beep() {
     try {
-      if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+      if (!actx) return;                     // 제스처 안에서 열리지 않았다
       if (actx.state === 'suspended') actx.resume();
       var o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
       o.type = 'sine'; o.frequency.setValueAtTime(880, t);
@@ -92,6 +105,7 @@ var App = (function () {
     if (state.started) return;
     state.started = true;
     document.getElementById('gate').classList.add('hide');
+    primeAudio();
 
     /* 세 요청 모두 이 제스처 안에서 곧바로 띄운다.
        await 로 줄세우면 iOS 가 사용자 동작으로 인정하지 않는다. */
@@ -319,7 +333,9 @@ var App = (function () {
       var dx = e.clientX - down.x, dy = e.clientY - down.y;
       moved = Math.max(moved, Math.hypot(dx, dy));
       if (look) {
-        var perPx = View.vFov() / Math.max(1, Render.size.h);
+        /* vFov/높이 는 tan 투영 때문에 실제와 어긋난다 —
+           초점거리에서 나오는 화면 중앙의 각도/픽셀 비율을 쓴다. */
+        var perPx = Geo.deg(1 / Math.max(1, View.state.f));
         Orient.setManual(look.h + dx * perPx * -1, look.p + dy * perPx);
       }
     });
@@ -361,13 +377,13 @@ var App = (function () {
     /* 데스크톱 키보드 */
     window.addEventListener('keydown', function (e) {
       if (e.target && /input|select|textarea/i.test(e.target.tagName)) return;
+      if (e.key === 'Escape') { UI.close(); e.preventDefault(); return; }
       var step = e.shiftKey ? 15 : 5;
-      if (Orient.usable()) return;
+      if (Orient.usable()) return;            // 아래는 센서가 없을 때의 둘러보기
       if (e.key === 'ArrowLeft') Orient.setManual(Orient.state.mh - step, Orient.state.mp);
       else if (e.key === 'ArrowRight') Orient.setManual(Orient.state.mh + step, Orient.state.mp);
       else if (e.key === 'ArrowUp') Orient.setManual(Orient.state.mh, Orient.state.mp + step);
       else if (e.key === 'ArrowDown') Orient.setManual(Orient.state.mh, Orient.state.mp - step);
-      else if (e.key === 'Escape') UI.close();
       else return;
       e.preventDefault();
     });
@@ -397,6 +413,6 @@ var App = (function () {
   }
 
   return { state: state, cfg: cfg, boot: boot, start: start, select: select,
-           save: save, setCamera: setCamera, setWake: setWake,
+           save: save, setCamera: setCamera, setWake: setWake, primeAudio: primeAudio,
            capture: capture, lookAt: lookAt, pause: pause, resume: resume };
 })();

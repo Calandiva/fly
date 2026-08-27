@@ -141,7 +141,7 @@ var Catalog = (function () {
     /* 화물 */
     'FDX:페덱스|UPS:UPS 항공|GTI:아틀라스에어|ABW:에어브리지카고|CLX:카고룩스|' +
     'CKS:칼리타에어|PAC:폴라에어카고|GEC:루프트한자 카고|CAO:중국화물항공|' +
-    'ABX:ABX 에어|BOX:에어로로직|MPH:마틴에어|SQC:싱가포르항공 카고|ETH:에티오피아항공|' +
+    'ABX:ABX 에어|BOX:에어로로직|MPH:마틴에어|SQC:싱가포르항공 카고|' +
     'AJT:아마존 에어|' +
     /* 저비용 · 기타 */
     'MAU:에어모리셔스|AIZ:아르키아|LNK:에어링크|SEY:에어세이셸|' +
@@ -168,11 +168,6 @@ var Catalog = (function () {
      긴 접두부터 맞춰 본다. */
   var REG = [
     ['HL', '대한민국'], ['JA', '일본'],
-    ['B-H', '홍콩'], ['B-K', '홍콩'], ['B-L', '홍콩'], ['B-M', '마카오'],
-    ['B-1', '중국'], ['B-2', '중국'], ['B-3', '중국'], ['B-5', '중국'],
-    ['B-6', '중국'], ['B-7', '중국'], ['B-8', '중국'], ['B-9', '중국'],
-    ['B-0', '중국'], ['B-4', '중국'], ['B0', '대만'], ['B1', '대만'],
-    ['B2', '대만'], ['B5', '대만'], ['B7', '대만'], ['B9', '대만'], ['B-', '중화권'],
     ['N', '미국'], ['C-F', '캐나다'], ['C-G', '캐나다'], ['C-', '캐나다'],
     ['G-', '영국'], ['D-', '독일'], ['F-', '프랑스'], ['I-', '이탈리아'],
     ['EC-', '스페인'], ['CS-', '포르투갈'], ['PH-', '네덜란드'], ['OO-', '벨기에'],
@@ -287,9 +282,22 @@ var Catalog = (function () {
   function category(c) { return c ? (CATEGORY[c.toUpperCase()] || null) : null; }
   function squawk(s) { return s ? (SQUAWK[s] || null) : null; }
 
+  /* B- 로 시작하는 등록기호는 접두만으로는 갈리지 않는다.
+     홍콩·마카오는 글자로 시작하고, 본토는 숫자 네 자리, 대만은 다섯 자리다.
+     (예: B-2032 본토 / B-18901 대만 / B-LRA 홍콩) */
+  function chinaRegion(r) {
+    var tail = r.slice(2);
+    if (/^[HKL]/.test(tail)) return '홍콩';
+    if (/^M/.test(tail)) return '마카오';
+    var digits = tail.match(/^\d+/);
+    if (digits) return digits[0].length >= 5 ? '대만' : '중국';
+    return '중화권';
+  }
+
   function country(reg, hex) {
     if (reg) {
       var r = reg.trim().toUpperCase(), best = null;
+      if (r.indexOf('B-') === 0) return chinaRegion(r);
       for (var i = 0; i < REG.length; i++) {
         if (r.indexOf(REG[i][0]) === 0 && (!best || REG[i][0].length > best[0].length)) best = REG[i];
       }

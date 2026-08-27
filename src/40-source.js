@@ -73,12 +73,14 @@ var Source = (function () {
       var a = list[i];
       var lat = numOr(a.lat, null), lon = numOr(a.lon, null);
       if (lat == null || lon == null) continue;
+      var hex = String(a.hex || a.r || '').toLowerCase().replace(/^~/, '');
+      if (!hex) continue;            // 배열 위치를 식별자로 쓰면 조회마다 정체가 바뀐다
       var ground = a.alt_baro === 'ground' || a.alt_geom === 'ground';
       var baro = ground ? 0 : numOr(a.alt_baro, null);
       var geom = ground ? 0 : numOr(a.alt_geom, null);
       var seen = numOr(a.seen_pos, numOr(a.seen, 0));
       out.push({
-        id: String(a.hex || a.r || i).toLowerCase().replace('~', ''),
+        id: hex,
         cs: (a.flight || '').trim() || null,
         reg: a.r || null,
         type: a.t || null,
@@ -105,10 +107,12 @@ var Source = (function () {
     for (var i = 0; i < rows.length; i++) {
       var s = rows[i];
       if (s[5] == null || s[6] == null) continue;
+      var oid = String(s[0] || '').toLowerCase().trim();
+      if (!oid) continue;
       var baroM = s[7], geoM = s[13];
       var altM = (geoM != null ? geoM : baroM);
       out.push({
-        id: String(s[0] || i).toLowerCase(),
+        id: oid,
         cs: (s[1] || '').trim() || null,
         reg: null, type: null, desc: null, cat: null,
         lat: s[6], lon: s[5],

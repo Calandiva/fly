@@ -179,6 +179,7 @@ src/60-ui.js           시트(목록 · 상세 · 설정)와 상태 표시
 src/80-app.js          상태 · 입력 · 메인 루프
 src/99-boot.js         시동
 src/_check.js          Node vm 으로 번들을 돌려 보는 개발용 점검
+src/_test.mjs          브라우저 회귀 테스트 (개발용)
 src/_sky.mjs           가짜 카메라에 물릴 하늘 영상 생성 (개발용)
 build.py               → index.html (완전한 문서), fly.html (Artifact 용)
 ```
@@ -202,6 +203,17 @@ chromium --use-fake-device-for-media-stream --use-file-for-fake-video-capture=sk
 이 방법으로 밝은 구름 위에서 상태 칩과 고각 눈금이 사라지는 걸 찾았습니다 —
 어두운 데모 배경에서는 멀쩡해 보이던 것들입니다. 그래서 HUD 의 선과 글자에는
 지도에서 쓰는 방식대로 어두운 테두리를 먼저 깔고 그 위에 그립니다.
+
+권한·캔버스·DOM 이 얽힌 부분은 실제로 띄워 봐야 합니다.
+
+```
+python3 build.py && npx http-server . -p 8099 -s &
+node src/_test.mjs
+```
+
+여기 있는 항목은 대부분 **한 번 났던 결함**입니다 — 피드 값이 원시 HTML 로
+들어가던 것, 목록이 표시 거리를 무시하던 것, 손으로 맞춘 화각을 자동 추정이
+덮어쓰던 것, 카메라를 여러 번 켜면 스트림이 새던 것 따위입니다.
 
 ---
 

@@ -72,6 +72,9 @@ var UI = (function () {
     view = v;
     el.sheet.classList.add('open');
     el.stage.classList.add('sheet');
+    /* 시트가 열리면 툴바가 위로 올라가고 스코프가 숨는다 —
+       라벨이 피해야 할 자리도 그만큼 달라진다. */
+    if (typeof Render !== 'undefined') Render.resize();
     lastPaint = 0;
     paint(App.state, true);
   }
@@ -109,7 +112,12 @@ var UI = (function () {
       sortBy = b.dataset.k; paint(app, true);
     };
 
-    var list = app.list.slice();
+    /* 화면과 같은 필터를 건다. 그러지 않으면 표시 거리를 60 NM 로 줄여도
+       목록에는 250 NM 짜리가 그대로 남아 상단의 대수와도 어긋난다. */
+    var maxM = Geo.nmToM(app.cfg.maxNm);
+    var list = app.list.filter(function (a) {
+      return a.slantM <= maxM && !(a.altFt != null && a.altFt < app.cfg.minAltFt);
+    });
     if (sortBy === 'alt') list.sort(function (a, b) { return (a.altFt || 0) - (b.altFt || 0); });
     else if (sortBy === 'tca') {
       /* 다가오는 것만, 가장 가까이 스칠 것부터 */
@@ -207,10 +215,13 @@ var UI = (function () {
     var c = a.tca;
     var route = Route.get(a.cs);
 
+    /* [이름, 값, 곁말] — 셋 다 이스케이프해서 넣는다.
+        예전에는 값 자리에 '<small>' 를 직접 끼워 넣었는데, 그러다 보니
+        피드에서 온 스쿼크 문자열도 원시 HTML 로 들어가고 있었다. */
     var cells = [
-      ['고도', Geo.fmtAlt(a.altFt, m) + (fl ? '<small>' + fl + '</small>' : '')],
+      ['고도', Geo.fmtAlt(a.altFt, m), fl],
       ['거리', Geo.fmtDist(a.slantM, m)],
-      ['방위', Geo.fmtAz(a.az) + '<small>' + Geo.compass(a.az) + '</small>'],
+      ['방위', Geo.fmtAz(a.az), Geo.compass(a.az)],
       ['고각', a.el.toFixed(1) + '°'],
       ['속도', Geo.fmtSpd(a.gs, m)],
       ['기수', a.track != null ? Geo.fmtAz(a.track) : '—'],
@@ -261,7 +272,8 @@ var UI = (function () {
       '<div class="guide">⌖ ' + esc(guide) +
         (Orient.usable() ? '' : ' <button class="btn sm" id="bLook">이 방향 보기</button>') + '</div>' +
       '<div class="dgrid">' + cells.map(function (x) {
-        return '<div class="cell"><k>' + esc(x[0]) + '</k><v>' + x[1] + '</v></div>';
+        return '<div class="cell"><k>' + esc(x[0]) + '</k><v>' + esc(x[1]) +
+               (x[2] ? '<small>' + esc(x[2]) + '</small>' : '') + '</v></div>';
       }).join('') + '</div>' +
       '<div style="margin-top:12px;font-size:11px;color:var(--ink-3);line-height:1.6">' +
         'ICAO 24bit ' + esc(a.id.toUpperCase()) +
@@ -378,7 +390,7 @@ var UI = (function () {
     chk('setTrail', function (v) { c.trail = v; App.save(); });
     chk('setWake', function (v) { App.setWake(v); });
     chk('setAlert', function (v) { c.alertOn = v; App.save(); });
-    chk('setChime', function (v) { c.chime = v; App.save(); });
+    chk('setChime', function (v) { c.chime = v; App.primeAudio(); App.save(); });
     chk('setRoute', function (v) {
       c.route = v; Route.setOn(v); App.save();
       toast(v ? '항로를 조회합니다' : '항로 조회를 끕니다');
@@ -386,7 +398,8 @@ var UI = (function () {
     rng('setAlertKm', ' km', function (v) { c.alertKm = v; App.save(); });
     rng('setAlertMin', ' 분', function (v) { c.alertMin = v; App.save(); });
     chk('setDemo', function (v) { c.demo = v; Source.setDemo(v); App.save(); toast(v ? '데모 항공기를 띄웁니다' : '실제 수신으로 돌아갑니다'); });
-    rng('setFov', '°', function (v) { c.fov = v; View.setFov(v); App.save(); });
+    /* 손으로 맞춘 값을 자동 추정이 덮어쓰면 보정한 보람이 없다 */
+    rng('setFov', '°', function (v) { c.fov = v; c.fovAuto = false; View.setFov(v); App.save(); });
     rng('setOff', '°', function (v) { c.headingOffset = v; Orient.setOffset(v); App.save(); });
     rng('setMax', ' NM', function (v) { c.maxNm = v; App.save(); });
     rng('setMinAlt', ' ft', function (v) { c.minAltFt = v; App.save(); });

@@ -70,23 +70,28 @@ var Position = (function () {
 
 var Camera = (function () {
   var st = { on: false, err: null, w: 0, h: 0, label: '' };
-  var stream = null, el = null;
+  var stream = null, el = null, opening = null;
 
   function bind(video) { el = video; }
 
   function start() {
     if (st.on) return Promise.resolve(st);
+    /* 여는 중에 또 부르면 getUserMedia 가 두 번 돌아 스트림 하나가 미아가 된다.
+       그 스트림은 아무도 stop() 하지 않아 카메라 표시등이 계속 켜져 있다. */
+    if (opening) return opening;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       st.err = 'https 연결이 아니거나 카메라를 지원하지 않는 브라우저입니다';
       return Promise.reject(new Error(st.err));
     }
-    return navigator.mediaDevices.getUserMedia({
+    opening = navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
         facingMode: { ideal: 'environment' },
         width: { ideal: 1920 }, height: { ideal: 1080 }
       }
     }).then(function (s) {
+      /* 여는 사이에 사용자가 카메라를 껐다면 새 스트림은 바로 접는다 */
+      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
       stream = s;
       var track = s.getVideoTracks()[0];
       st.label = track ? track.label : '';
@@ -101,20 +106,24 @@ var Camera = (function () {
         setTimeout(res, 2500);
       });
     }).then(function () {
+      opening = null;
       st.on = true; st.err = null;
       st.w = el.videoWidth || 0; st.h = el.videoHeight || 0;
       el.classList.remove('off');
       return st;
     }).catch(function (e) {
+      opening = null;
       st.on = false;
       st.err = (e && e.name === 'NotAllowedError') ? '카메라 권한이 거부되었습니다'
              : (e && e.name === 'NotFoundError') ? '뒷면 카메라를 찾을 수 없습니다'
              : (e && e.message) || '카메라를 열 수 없습니다';
       throw new Error(st.err);
     });
+    return opening;
   }
 
   function stop() {
+    opening = null;
     if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
     stream = null; st.on = false; st.w = 0; st.h = 0;
     if (el) { el.srcObject = null; el.classList.add('off'); }
