@@ -1,0 +1,2683 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="description" content="휴대폰을 하늘로 들면 카메라 위에 지금 지나가는 항공기가 편명·고도·거리와 함께 겹쳐 보이는 증강현실 레이더.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#050908">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Fly 항공기 증강현실 레이더</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
+<style>
+/* 토큰: 야간 조종석 HUD. 인광 녹색 = 계기, 청록 = 선택, 호박 = 경고 */
+:root{
+  --hud:#5FE3A1; --hud-2:#37B77B; --hud-3:#1E6B49;
+  --sel:#6FD8FF; --sel-2:#2C9CC9;
+  --amber:#FFC24B; --red:#FF5C63; --violet:#B79BFF;
+  --ink:#EAF4EF; --ink-2:#9FB6AC; --ink-3:#678076;
+  --panel:rgba(9,15,13,.86); --panel-2:rgba(16,26,22,.92); --panel-3:rgba(24,38,32,.94);
+  --line:rgba(95,227,161,.22); --line-2:rgba(95,227,161,.40);
+  --shade:rgba(4,8,7,.72);
+  --r:10px; --r-sm:7px;
+  --sans:"IBM Plex Sans KR",-apple-system,"Segoe UI","Malgun Gothic",sans-serif;
+  --mono:"IBM Plex Mono","D2Coding",ui-monospace,Consolas,monospace;
+  --safe-t:env(safe-area-inset-top,0px);
+  --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-l:env(safe-area-inset-left,0px);
+  --safe-r:env(safe-area-inset-right,0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  margin:0;background:#050908;color:var(--ink);
+  font-family:var(--sans);font-size:13px;line-height:1.5;
+  -webkit-font-smoothing:antialiased;overflow:hidden;overscroll-behavior:none;
+  touch-action:manipulation;
+}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--hud);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ── 무대 ─────────────────────────────────────────── */
+#stage{position:fixed;inset:0;overflow:hidden;background:#050908}
+#cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#050908}
+#cam.off{display:none}
+/* 카메라가 없을 때의 바탕. 하늘과 지면은 캔버스가 실제 자세로 그린다 */
+#synth{position:absolute;inset:0;display:none;background:#04121a}
+#synth.on{display:block}
+#veil{position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(120% 80% at 50% 50%,transparent 40%,rgba(2,6,5,.55) 100%)}
+#hud{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+
+/* ── 공통 패널 ────────────────────────────────────── */
+.panel{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  backdrop-filter:blur(14px) saturate(1.3);-webkit-backdrop-filter:blur(14px) saturate(1.3);
+  box-shadow:0 8px 32px rgba(0,0,0,.5);
+}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  min-height:34px;padding:0 11px;background:var(--panel-2);
+  border:1px solid var(--line);border-radius:var(--r-sm);color:var(--ink);
+  cursor:pointer;white-space:nowrap;font-size:12.5px;font-weight:500;
+  transition:background .12s,border-color .12s,color .12s;
+}
+.btn:hover{background:var(--panel-3);border-color:var(--line-2)}
+.btn:active{transform:translateY(.5px)}
+.btn.on{background:rgba(95,227,161,.16);border-color:var(--line-2);color:var(--hud)}
+.btn.pri{background:var(--hud);border-color:var(--hud);color:#052015;font-weight:700}
+.btn.pri:hover{filter:brightness(1.08);background:var(--hud)}
+.btn.icon{width:38px;height:38px;min-height:38px;padding:0;font-size:15px}
+.btn[disabled]{opacity:.4;pointer-events:none}
+.chip{
+  display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;
+  border-radius:999px;background:rgba(95,227,161,.12);border:1px solid var(--line);
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.02em;color:var(--hud);
+}
+.chip.warn{background:rgba(255,194,75,.14);border-color:rgba(255,194,75,.35);color:var(--amber)}
+.chip.bad{background:rgba(255,92,99,.14);border-color:rgba(255,92,99,.35);color:var(--red)}
+.chip.mute{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.12);color:var(--ink-3)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.dot.live{animation:pulse 1.8s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+/* ── 상단 상태바 ──────────────────────────────────── */
+#top{
+  position:absolute;left:calc(8px + var(--safe-l));right:calc(8px + var(--safe-r));
+  top:calc(8px + var(--safe-t));z-index:20;
+  display:flex;align-items:center;gap:6px;flex-wrap:wrap;pointer-events:none;
+}
+#top > *{pointer-events:auto}
+.brand{display:flex;align-items:baseline;gap:6px;padding:0 10px;height:30px;
+  border-radius:999px;background:var(--panel);border:1px solid var(--line);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);user-select:none}
+.brand b{font-size:14px;font-weight:700;letter-spacing:-.3px;color:var(--hud)}
+.brand span{font-family:var(--mono);font-size:9.5px;color:var(--ink-3);letter-spacing:.08em}
+#stat{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.spacer{flex:1}
+
+/* ── 우측 세로 툴바 ───────────────────────────────── */
+#tools{
+  position:absolute;right:calc(8px + var(--safe-r));top:50%;transform:translateY(-50%);
+  z-index:20;display:flex;flex-direction:column;gap:7px;
+}
+
+/* ── 레이더 스코프 ────────────────────────────────── */
+#scope{
+  position:absolute;left:calc(10px + var(--safe-l));bottom:calc(10px + var(--safe-b));
+  z-index:18;width:168px;height:168px;border-radius:50%;padding:0;overflow:hidden;
+  border:1px solid var(--line-2);background:var(--shade);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);cursor:crosshair;
+}
+#scope canvas{display:block;width:100%;height:100%}
+#scope.hide{display:none}
+@media (max-width:420px){#scope{width:136px;height:136px}}
+
+/* ── 하단 시트 (목록 / 상세 / 설정) ───────────────── */
+#sheet{
+  position:absolute;left:0;right:0;bottom:0;z-index:30;
+  transform:translateY(101%);transition:transform .26s cubic-bezier(.32,.72,0,1);
+  padding:0 var(--safe-r) var(--safe-b) var(--safe-l);
+}
+#sheet.open{transform:translateY(0)}
+#sheetInner{
+  margin:0 8px 8px;border-radius:16px 16px var(--r) var(--r);
+  max-height:min(66dvh,560px);display:flex;flex-direction:column;overflow:hidden;
+  background:var(--panel);border:1px solid var(--line);
+  backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3);
+  box-shadow:0 -8px 40px rgba(0,0,0,.6);
+}
+#grab{height:20px;display:flex;align-items:center;justify-content:center;flex:none;cursor:grab}
+#grab::before{content:"";width:38px;height:4px;border-radius:2px;background:var(--line-2)}
+#sheetHead{
+  display:flex;align-items:center;gap:8px;padding:2px 12px 10px;flex:none;
+  border-bottom:1px solid var(--line);
+}
+#sheetTitle{font-size:13.5px;font-weight:600;letter-spacing:-.2px}
+#sheetBody{overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:10px 12px 14px}
+#sheetBody::-webkit-scrollbar{width:8px}
+#sheetBody::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:4px}
+
+/* 목록 */
+.row{
+  display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;
+  padding:9px 10px;border-radius:var(--r-sm);cursor:pointer;
+  border:1px solid transparent;transition:background .12s;
+}
+.row:hover{background:rgba(95,227,161,.07)}
+.row.sel{background:rgba(111,216,255,.12);border-color:rgba(111,216,255,.34)}
+.row + .row{margin-top:3px}
+.row .glyph{width:26px;height:26px;display:grid;place-items:center;color:var(--hud);flex:none}
+.row .cs{font-family:var(--mono);font-size:13px;font-weight:600;letter-spacing:.02em}
+.row .sub{font-size:11px;color:var(--ink-2);margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .rt{text-align:right;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);line-height:1.35}
+.row .rt b{display:block;font-size:13px;color:var(--ink);font-weight:600}
+.empty{padding:26px 12px;text-align:center;color:var(--ink-3);font-size:12.5px;line-height:1.7}
+
+/* 상세 */
+.dgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:7px;margin-top:10px}
+.cell{background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-sm);padding:7px 9px}
+.cell k{display:block;font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-3);font-family:var(--mono);margin-bottom:2px}
+.cell v{display:block;font-family:var(--mono);font-size:15px;font-weight:600;letter-spacing:-.2px}
+.cell v small{font-size:10.5px;font-weight:400;color:var(--ink-2);margin-left:2px}
+.dhead{display:flex;align-items:center;gap:10px}
+.dhead .cs{font-family:var(--mono);font-size:21px;font-weight:700;letter-spacing:.01em;color:var(--sel)}
+.dhead .meta{font-size:11.5px;color:var(--ink-2);margin-top:2px}
+
+/* 설정 */
+.fld{display:flex;align-items:center;gap:10px;padding:8px 0}
+.fld + .fld{border-top:1px solid var(--line)}
+.fld .lab{flex:1;min-width:0}
+.fld .lab b{display:block;font-size:12.5px;font-weight:500}
+.fld .lab i{display:block;font-style:normal;font-size:11px;color:var(--ink-3);margin-top:1px;line-height:1.45}
+.fld .ctl{flex:none;display:flex;align-items:center;gap:8px}
+.fld.col{display:block}
+.fld.col .ctl{margin-top:8px;width:100%}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:26px;background:transparent;cursor:pointer;
+}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--line-2);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;
+  background:var(--hud);border:3px solid #06120d;margin-top:-8.5px;box-shadow:0 1px 6px rgba(0,0,0,.5)}
+input[type=range]::-moz-range-track{height:3px;background:var(--line-2);border-radius:2px}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;border:3px solid #06120d;border-radius:50%;background:var(--hud)}
+.val{font-family:var(--mono);font-size:12px;color:var(--hud);min-width:56px;text-align:right}
+.seg{display:flex;background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden}
+.seg button{height:30px;padding:0 11px;background:none;border:0;cursor:pointer;
+  font-size:12px;color:var(--ink-2);border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--hud);color:#052015;font-weight:600}
+.sw{position:relative;width:44px;height:26px;flex:none;cursor:pointer}
+.sw input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
+.sw i{position:absolute;inset:0;border-radius:999px;background:var(--panel-3);
+  border:1px solid var(--line);transition:.16s}
+.sw i::after{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;
+  background:var(--ink-3);transition:.16s}
+.sw input:checked + i{background:rgba(95,227,161,.24);border-color:var(--line-2)}
+.sw input:checked + i::after{transform:translateX(18px);background:var(--hud)}
+.sechead{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-3);margin:14px 0 2px}
+.sechead:first-child{margin-top:0}
+
+/* ── 시작 화면 ────────────────────────────────────── */
+#gate{
+  position:absolute;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
+  padding:24px;background:radial-gradient(90% 70% at 50% 30%,#0a2018,#050908 70%);
+}
+#gate.hide{display:none}
+#gateCard{max-width:400px;width:100%;text-align:left}
+#gateCard .logo{display:flex;align-items:baseline;gap:9px;margin-bottom:4px}
+#gateCard .logo b{font-size:32px;font-weight:700;letter-spacing:-1.2px;color:var(--hud)}
+#gateCard .logo span{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--ink-3)}
+#gateCard p.lead{font-size:13.5px;color:var(--ink-2);line-height:1.65;margin:6px 0 18px}
+.perm{display:flex;gap:11px;align-items:flex-start;padding:10px 0}
+.perm + .perm{border-top:1px solid var(--line)}
+.perm .ic{width:28px;height:28px;flex:none;display:grid;place-items:center;border-radius:8px;
+  background:rgba(95,227,161,.12);border:1px solid var(--line);color:var(--hud)}
+.perm b{display:block;font-size:12.5px;font-weight:600}
+.perm i{display:block;font-style:normal;font-size:11.5px;color:var(--ink-3);line-height:1.55;margin-top:2px}
+#gateBtns{display:flex;gap:8px;margin-top:18px}
+#gateBtns .btn{flex:1;min-height:44px;font-size:14px}
+#gateNote{margin-top:12px;font-size:11px;color:var(--ink-3);line-height:1.6;text-align:center}
+
+/* ── 토스트 ───────────────────────────────────────── */
+#toast{
+  position:absolute;left:50%;transform:translateX(-50%);
+  bottom:calc(20px + var(--safe-b));z-index:70;
+  display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none;
+}
+.tst{
+  padding:8px 14px;border-radius:999px;background:var(--panel-3);border:1px solid var(--line-2);
+  font-size:12.5px;box-shadow:0 6px 24px rgba(0,0,0,.55);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  animation:tin .2s ease-out;max-width:min(92vw,420px);text-align:center;
+}
+.tst.warn{border-color:rgba(255,194,75,.45);color:var(--amber)}
+.tst.bad{border-color:rgba(255,92,99,.45);color:var(--red)}
+@keyframes tin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* 시트가 열리면 스코프는 감추고, 툴바는 위쪽으로 올려 계속 닿을 수 있게 둔다 */
+#stage.sheet #scope{display:none}
+#stage.sheet #tools{top:calc(52px + var(--safe-t));transform:none}
+#stage.sheet #toast{bottom:auto;top:calc(52px + var(--safe-t))}
+
+/* 안전영역 실측용 — env() 는 getComputedStyle 로 읽히지 않아 직접 재야 한다 */
+#probe{position:absolute;left:0;top:0;width:0;height:var(--safe-t);
+  pointer-events:none;visibility:hidden}
+svg{display:block}
+</style>
+
+</head>
+<body>
+<div id="stage">
+  <video id="cam" playsinline muted autoplay class="off"></video>
+  <div id="synth" class="on"></div>
+  <div id="veil"></div>
+  <div id="probe"></div>
+  <canvas id="hud"></canvas>
+
+  <div id="top">
+    <div class="brand"><b>Fly</b><span>AR RADAR</span></div>
+    <div id="stat"></div>
+  </div>
+
+  <div id="tools">
+    <button class="btn icon" id="bList"  title="주변 항공기 목록" aria-label="주변 항공기 목록">☰</button>
+    <button class="btn icon" id="bCam"   title="카메라 켜기/끄기" aria-label="카메라 켜기/끄기">◉</button>
+    <button class="btn icon" id="bLock"  title="레이더 노스업/헤딩업" aria-label="레이더 방향 기준">N</button>
+    <button class="btn icon" id="bSet"   title="설정" aria-label="설정">⚙</button>
+  </div>
+
+  <button id="scope" title="레이더 스코프 — 탭하면 해당 항공기를 선택합니다"><canvas></canvas></button>
+
+  <div id="sheet">
+    <div id="sheetInner" role="dialog" aria-modal="false">
+      <div id="grab"></div>
+      <div id="sheetHead">
+        <div id="sheetTitle">주변 항공기</div>
+        <div class="spacer"></div>
+        <div id="sheetTools"></div>
+        <button class="btn icon" id="bClose" aria-label="닫기">✕</button>
+      </div>
+      <div id="sheetBody"></div>
+    </div>
+  </div>
+
+  <div id="gate">
+    <div id="gateCard" class="panel" style="padding:22px 20px">
+      <div class="logo"><b>Fly</b><span>AR RADAR</span></div>
+      <p class="lead">하늘로 휴대폰을 들면 카메라 화면 위에 실제로 지나가는 항공기가 편명·고도·거리와 함께 겹쳐 보입니다.</p>
+
+      <div class="perm">
+        <div class="ic">◉</div>
+        <div><b>카메라</b><i>하늘 배경 위에 항공기를 겹쳐 그립니다. 영상은 기기 밖으로 나가지 않고 저장되지도 않습니다.</i></div>
+      </div>
+      <div class="perm">
+        <div class="ic">⌖</div>
+        <div><b>위치</b><i>내 좌표를 기준으로 방위·거리·고각을 계산합니다. 항공기 조회 반경을 정하는 데에만 쓰입니다.</i></div>
+      </div>
+      <div class="perm">
+        <div class="ic">⟳</div>
+        <div><b>방향 센서</b><i>나침반과 기울기로 지금 어느 하늘을 보고 있는지 알아냅니다. iOS는 별도 허용이 필요합니다.</i></div>
+      </div>
+
+      <div id="gateBtns">
+        <button class="btn pri" id="bStart">시작하기</button>
+        <button class="btn" id="bDemo">데모로 보기</button>
+      </div>
+      <div id="gateNote">항공기 위치는 공개 ADS-B 네트워크에서 받아옵니다. 실제 관제용으로 쓸 수 없습니다.</div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+</div>
+
+<script>
+/* ── 20-geo.js — 측지 계산과 단위 ───────────────────────────────
+   좌표계 약속: ENU (X=동, Y=북, Z=상). 방위(azimuth)는 진북 기준 시계방향.
+   ---------------------------------------------------------------- */
+'use strict';
+
+var Geo = (function () {
+  var R_E = 6371008.8;                 // 평균 지구 반지름 (m)
+  var D2R = Math.PI / 180, R2D = 180 / Math.PI;
+
+  function rad(d) { return d * D2R; }
+  function deg(r) { return r * R2D; }
+
+  /* 각도를 [0,360) 으로 정규화 */
+  function norm360(d) { d = d % 360; return d < 0 ? d + 360 : d; }
+  /* 각도를 (-180,180] 으로 정규화 — 최단 회전 방향 계산용 */
+  function norm180(d) { d = norm360(d); return d > 180 ? d - 360 : d; }
+
+  /* 두 각 사이를 최단 경로로 보간 */
+  function lerpAngle(a, b, t) { return norm360(a + norm180(b - a) * t); }
+
+  /* 지표면 대권 거리 (m) */
+  function haversine(lat1, lon1, lat2, lon2) {
+    var p1 = rad(lat1), p2 = rad(lat2);
+    var dp = p2 - p1, dl = rad(lon2 - lon1);
+    var a = Math.sin(dp / 2) * Math.sin(dp / 2) +
+            Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+    return 2 * R_E * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  /* 출발점에서 목표점을 바라보는 초기 방위각 (진북 0°, 시계방향) */
+  function bearing(lat1, lon1, lat2, lon2) {
+    var p1 = rad(lat1), p2 = rad(lat2), dl = rad(lon2 - lon1);
+    var y = Math.sin(dl) * Math.cos(p2);
+    var x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+    return norm360(deg(Math.atan2(y, x)));
+  }
+
+  /* 대권을 따라 방위 brg 로 dist(m) 이동한 지점 — 추측항법에 쓴다 */
+  function destination(lat, lon, brg, dist) {
+    var d = dist / R_E, t = rad(brg), p1 = rad(lat), l1 = rad(lon);
+    var sp = Math.sin(p1), cp = Math.cos(p1), sd = Math.sin(d), cd = Math.cos(d);
+    var p2 = Math.asin(sp * cd + cp * sd * Math.cos(t));
+    var l2 = l1 + Math.atan2(Math.sin(t) * sd * cp, cd - sp * Math.sin(p2));
+    return { lat: deg(p2), lon: norm180(deg(l2)) };
+  }
+
+  /* 고각(elevation). 지구 곡률로 인한 침하 d²/2R 를 빼 준다.
+     ground: 지표 거리(m), dh: 관측자 대비 고도차(m) */
+  function elevation(ground, dh) {
+    if (ground < 1) return dh > 0 ? 90 : -90;
+    return deg(Math.atan2(dh - (ground * ground) / (2 * R_E), ground));
+  }
+
+  /* 관측자↔항공기 시선 거리 (m) */
+  function slant(ground, dh) {
+    var drop = (ground * ground) / (2 * R_E);
+    return Math.sqrt(ground * ground + (dh - drop) * (dh - drop));
+  }
+
+  /* 방위·고각 → ENU 단위벡터 */
+  function enu(az, el) {
+    var a = rad(az), e = rad(el), ce = Math.cos(e);
+    return [ce * Math.sin(a), ce * Math.cos(a), Math.sin(e)];
+  }
+
+  /* 위경도 1° 당 미터 — 조회 반경을 위경도 상자로 바꿀 때 쓴다 */
+  function degBox(lat, meters) {
+    var dLat = meters / 111320;
+    var dLon = meters / (111320 * Math.max(0.02, Math.cos(rad(lat))));
+    return { dLat: dLat, dLon: dLon };
+  }
+
+  /* ── 단위 변환 ── */
+  var FT = 0.3048, NM = 1852, KT = 0.514444;
+  function ftToM(f) { return f * FT; }
+  function mToFt(m) { return m / FT; }
+  function ktToMps(k) { return k * KT; }
+  function nmToM(n) { return n * NM; }
+  function mToNm(m) { return m / NM; }
+
+  /* ── 표시 서식 ──
+     metric=true 면 km/m·km/h, false 면 NM·ft·kt 를 쓴다. */
+  function fmtDist(m, metric) {
+    if (!isFinite(m)) return '—';
+    if (metric) return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(m < 10000 ? 1 : 0) + ' km';
+    var nm = m / NM;
+    return nm < 1 ? nm.toFixed(2) + ' NM' : nm.toFixed(nm < 10 ? 1 : 0) + ' NM';
+  }
+  function fmtAlt(ftVal, metric) {
+    if (ftVal == null || !isFinite(ftVal)) return '—';
+    if (metric) return Math.round(ftVal * FT).toLocaleString('ko') + ' m';
+    return Math.round(ftVal).toLocaleString('ko') + ' ft';
+  }
+  function fmtSpd(kt, metric) {
+    if (kt == null || !isFinite(kt)) return '—';
+    return metric ? Math.round(kt * KT * 3.6) + ' km/h' : Math.round(kt) + ' kt';
+  }
+  /* 상승/하강률 */
+  function fmtVs(fpm, metric) {
+    if (fpm == null || !isFinite(fpm)) return '—';
+    var s = fpm > 60 ? '▲ ' : fpm < -60 ? '▼ ' : '— ';
+    var v = Math.abs(Math.round(fpm / 10) * 10);
+    return s + (metric ? (v * FT / 60).toFixed(1) + ' m/s' : v.toLocaleString('ko') + ' fpm');
+  }
+  /* 방위각 → 16방위 한글 이름 */
+  var PTS = ['북','북북동','북동','동북동','동','동남동','남동','남남동',
+             '남','남남서','남서','서남서','서','서북서','북서','북북서'];
+  function compass(az) { return PTS[Math.round(norm360(az) / 22.5) % 16]; }
+  /* 방위각 → 항공용 3자리 표기 (015°) */
+  function fmtAz(az) { return ('00' + Math.round(norm360(az))).slice(-3) + '°'; }
+  /* 고도를 항공식 FL 로 — 18,000ft 이상에서만 의미가 있다 */
+  function flightLevel(ft) {
+    if (ft == null || !isFinite(ft) || ft < 18000) return null;
+    return 'FL' + ('00' + Math.round(ft / 100)).slice(-3);
+  }
+  /* 경과 시간 */
+  function fmtAge(sec) {
+    if (sec == null || !isFinite(sec)) return '—';
+    if (sec < 1) return '방금';
+    if (sec < 60) return Math.round(sec) + '초 전';
+    if (sec < 3600) return Math.round(sec / 60) + '분 전';
+    return Math.round(sec / 3600) + '시간 전';
+  }
+
+  return {
+    R_E: R_E, FT: FT, NM: NM, KT: KT,
+    rad: rad, deg: deg, norm360: norm360, norm180: norm180, lerpAngle: lerpAngle,
+    haversine: haversine, bearing: bearing, destination: destination,
+    elevation: elevation, slant: slant, enu: enu, degBox: degBox,
+    ftToM: ftToM, mToFt: mToFt, ktToMps: ktToMps, nmToM: nmToM, mToNm: mToNm,
+    fmtDist: fmtDist, fmtAlt: fmtAlt, fmtSpd: fmtSpd, fmtVs: fmtVs,
+    compass: compass, fmtAz: fmtAz, flightLevel: flightLevel, fmtAge: fmtAge
+  };
+})();
+
+/* ── 25-catalog.js — 기종·항공사·등록국 사전 ─────────────────────
+   ADS-B 는 코드만 준다. 화면에 읽을 수 있는 이름을 붙이기 위한 표.
+   "A|B|C" 형태로 눌러 담고 부팅 때 한 번만 펼친다.
+   ---------------------------------------------------------------- */
+'use strict';
+
+var Catalog = (function () {
+
+  function expand(src) {
+    var out = Object.create(null), a = src.split('|');
+    for (var i = 0; i < a.length; i++) {
+      var j = a[i].indexOf(':');
+      if (j > 0) out[a[i].slice(0, j)] = a[i].slice(j + 1);
+    }
+    return out;
+  }
+
+  /* ── ICAO 기종 지정자 ─────────────────────────────────────── */
+  var TYPE = expand(
+    /* 에어버스 */
+    'A19N:에어버스 A319neo|A20N:에어버스 A320neo|A21N:에어버스 A321neo|' +
+    'A318:에어버스 A318|A319:에어버스 A319|A320:에어버스 A320|A321:에어버스 A321|' +
+    'A306:에어버스 A300-600|A30B:에어버스 A300|A310:에어버스 A310|' +
+    'A332:에어버스 A330-200|A333:에어버스 A330-300|A337:에어버스 A330-700 벨루가XL|' +
+    'A338:에어버스 A330-800neo|A339:에어버스 A330-900neo|' +
+    'A342:에어버스 A340-200|A343:에어버스 A340-300|A345:에어버스 A340-500|A346:에어버스 A340-600|' +
+    'A359:에어버스 A350-900|A35K:에어버스 A350-1000|A35F:에어버스 A350F|' +
+    'A388:에어버스 A380-800|A400:에어버스 A400M 아틀라스|' +
+    /* 보잉 */
+    'B712:보잉 717-200|B721:보잉 727-100|B722:보잉 727-200|' +
+    'B732:보잉 737-200|B733:보잉 737-300|B734:보잉 737-400|B735:보잉 737-500|' +
+    'B736:보잉 737-600|B737:보잉 737-700|B738:보잉 737-800|B739:보잉 737-900|' +
+    'B37M:보잉 737 MAX 7|B38M:보잉 737 MAX 8|B39M:보잉 737 MAX 9|B3XM:보잉 737 MAX 10|' +
+    'B741:보잉 747-100|B742:보잉 747-200|B743:보잉 747-300|B744:보잉 747-400|' +
+    'B74D:보잉 747-400 여객화물|B74F:보잉 747-400F|B748:보잉 747-8|B74R:보잉 747SR|B74S:보잉 747SP|' +
+    'B752:보잉 757-200|B753:보잉 757-300|' +
+    'B762:보잉 767-200|B763:보잉 767-300|B764:보잉 767-400|' +
+    'B772:보잉 777-200|B77L:보잉 777-200LR/F|B773:보잉 777-300|B77W:보잉 777-300ER|' +
+    'B778:보잉 777-8|B779:보잉 777-9|' +
+    'B788:보잉 787-8|B789:보잉 787-9|B78X:보잉 787-10|' +
+    /* 맥도넬더글러스 · 록히드 */
+    'MD11:MD-11|MD81:MD-81|MD82:MD-82|MD83:MD-83|MD87:MD-87|MD88:MD-88|MD90:MD-90|' +
+    'DC10:DC-10|DC85:DC-8|DC93:DC-9|L101:록히드 트라이스타|' +
+    /* 엠브라에르 */
+    'E170:엠브라에르 170|E75L:엠브라에르 175|E75S:엠브라에르 175|E190:엠브라에르 190|' +
+    'E195:엠브라에르 195|E290:엠브라에르 E190-E2|E295:엠브라에르 E195-E2|' +
+    'E110:엠브라에르 반데이란치|E120:엠브라에르 브라질리아|' +
+    'E35L:엠브라에르 레거시 600|E50P:엠브라에르 페놈 100|E55P:엠브라에르 페놈 300|' +
+    'E545:엠브라에르 레거시 450|E550:엠브라에르 레거시 500|E75X:엠브라에르 175-E2|' +
+    /* 봄바르디에 · 미쓰비시 */
+    'CRJ1:봄바르디에 CRJ-100|CRJ2:봄바르디에 CRJ-200|CRJ7:봄바르디에 CRJ-700|' +
+    'CRJ9:봄바르디에 CRJ-900|CRJX:봄바르디에 CRJ-1000|' +
+    'BCS1:에어버스 A220-100|BCS3:에어버스 A220-300|' +
+    'DH8A:대시 8-100|DH8B:대시 8-200|DH8C:대시 8-300|DH8D:대시 8 Q400|' +
+    'CL30:챌린저 300|CL35:챌린저 350|CL60:챌린저 600|' +
+    'GLEX:글로벌 익스프레스|GL5T:글로벌 5000|GL7T:글로벌 7500|' +
+    /* 터보프롭 · 지역기 */
+    'AT43:ATR 42-300|AT45:ATR 42-500|AT46:ATR 42-600|' +
+    'AT72:ATR 72|AT75:ATR 72-500|AT76:ATR 72-600|' +
+    'SF34:사브 340|SB20:사브 2000|F50:포커 50|F70:포커 70|F100:포커 100|' +
+    'J328:도르니에 328|D228:도르니에 228|' +
+    'BE20:비치 킹에어 200|B350:비치 킹에어 350|BE9L:비치 킹에어 90|B190:비치 1900|' +
+    'SW4:페어차일드 메트로라이너|' +
+    /* 소형 · 자가용 */
+    'C172:세스나 172 스카이호크|C182:세스나 182|C206:세스나 206|C208:세스나 캐러밴|' +
+    'C25A:세스나 사이테이션 CJ2|C25B:세스나 사이테이션 CJ3|C25C:세스나 사이테이션 CJ4|' +
+    'C56X:세스나 사이테이션 엑셀|C68A:세스나 사이테이션 라티튜드|C700:세스나 사이테이션 롱기튜드|' +
+    'GLF4:걸프스트림 IV|GLF5:걸프스트림 V|GLF6:걸프스트림 G650|GLF7:걸프스트림 G700|' +
+    'F2TH:다소 팰컨 2000|FA7X:다소 팰컨 7X|FA8X:다소 팰컨 8X|' +
+    'PC12:필라투스 PC-12|PC24:필라투스 PC-24|TBM9:다허 TBM 900|' +
+    'SR22:시러스 SR22|DA40:다이아몬드 DA40|DA42:다이아몬드 DA42|P28A:파이퍼 체로키|' +
+    'BE58:비치 바론|LJ45:리어젯 45|LJ60:리어젯 60|H25B:호커 800|' +
+    /* 군용 · 특수 */
+    'C130:C-130 허큘리스|C30J:C-130J 슈퍼허큘리스|C17:C-17 글로브마스터 III|' +
+    'C5M:C-5M 슈퍼갤럭시|KC35:KC-135 스트래토탱커|K35R:KC-135R|A332 MRTT:A330 MRTT|' +
+    'E3TF:E-3 센트리 조기경보기|E6:E-6 머큐리|P8:P-8 포세이돈|P3:P-3 오라이온|' +
+    'C295:에어버스 C295|CN35:CASA CN-235|C160:트란살 C-160|' +
+    'F16:F-16 파이팅팰컨|F15:F-15 이글|F18H:F/A-18 슈퍼호넷|F22A:F-22 랩터|F35:F-35 라이트닝 II|' +
+    'T50:KAI T-50 골든이글|FA50:KAI FA-50|KT1:KAI KT-1 웅비|A10:A-10 선더볼트 II|' +
+    'U2:U-2 드래곤레이디|RQ4:RQ-4 글로벌호크|MQ9:MQ-9 리퍼|' +
+    /* 회전익 */
+    'EC35:에어버스 H135|EC45:에어버스 H145|EC30:에어버스 H130|EC55:에어버스 H155|' +
+    'AS50:에어버스 AS350 에큐뢰이|H60:시코르스키 UH-60 블랙호크|S76:시코르스키 S-76|' +
+    'S92:시코르스키 S-92|B06:벨 206 제트레인저|B407:벨 407|B412:벨 412|B429:벨 429|' +
+    'A109:레오나르도 A109|A139:레오나르도 AW139|A169:레오나르도 AW169|A189:레오나르도 AW189|' +
+    'R44:로빈슨 R44|R66:로빈슨 R66|AH64:AH-64 아파치|CH47:CH-47 치누크|MI8:Mi-8|' +
+    /* 러시아 · 기타 */
+    'SU95:수호이 슈퍼젯 100|A148:안토노프 An-148|AN26:안토노프 An-26|' +
+    'A124:안토노프 An-124 루슬란|A225:안토노프 An-225 므리야|' +
+    'IL76:일류신 Il-76|IL96:일류신 Il-96|T204:투폴레프 Tu-204|T154:투폴레프 Tu-154|' +
+    'C919:COMAC C919|ARJ2:COMAC ARJ21|' +
+    'BALL:열기구|GLID:글라이더|SHIP:비행선|UAV:무인기|GRND:지상 차량'
+  );
+
+  /* ── 항공사 (편명 앞 3글자 ICAO 코드) ─────────────────────── */
+  var AIRLINE = expand(
+    /* 대한민국 */
+    'KAL:대한항공|AAR:아시아나항공|JJA:제주항공|JNA:진에어|ABL:에어부산|' +
+    'TWB:티웨이항공|APZ:에어프레미아|ESR:이스타항공|ASV:에어서울|EOK:에어로케이|' +
+    'HGG:하이에어|KAF:대한민국 공군|KOR:고려항공|' +
+    /* 일본 */
+    'JAL:일본항공|ANA:전일본공수|APJ:피치항공|JJP:제트스타 재팬|SKY:스카이마크|' +
+    'SFJ:스타플라이어|ADO:에어두|SNJ:솔라시드에어|JTA:일본트랜스오션|NCA:일본화물항공|' +
+    'ZIP:집에어 도쿄|SJO:스프링재팬|' +
+    /* 중화권 */
+    'CCA:중국국제항공|CES:중국동방항공|CSN:중국남방항공|CHH:하이난항공|CSH:상하이항공|' +
+    'CXA:샤먼항공|CSC:쓰촨항공|CQH:춘추항공|DKH:준야오항공|CDG:상다치항공|' +
+    'CAL:중화항공|EVA:에바항공|SJX:스타럭스항공|TTW:타이거에어 타이완|' +
+    'CPA:캐세이퍼시픽|HKE:홍콩익스프레스|AHK:에어홍콩|CRK:홍콩항공|' +
+    /* 동남아 · 남아시아 */
+    'SIA:싱가포르항공|SLK:실크에어|TGW:스쿠트|THA:타이항공|TVJ:타이 비엣젯|' +
+    'AIQ:타이 에어아시아|MAS:말레이시아항공|AXM:에어아시아|MXD:말린도항공|BTK:바틱에어|' +
+    'GIA:가루다 인도네시아|CTV:시티링크|LNI:라이온에어|' +
+    'HVN:베트남항공|VJC:비엣젯항공|BAV:뱀부항공|PIC:퍼시픽항공|' +
+    'PAL:필리핀항공|CEB:세부퍼시픽|APG:에어아시아 필리핀|' +
+    'AIC:에어인디아|IGO:인디고|VTI:비스타라|SEJ:스파이스젯|' +
+    'BBC:비만 방글라데시|SLM:스리랑카항공|PIA:파키스탄국제항공|RNA:네팔항공|' +
+    'MNA:몽골항공|MMA:미얀마국제항공|KHV:캄보디아 앙코르항공|' +
+    /* 중동 · 아프리카 */
+    'UAE:에미레이트항공|ETD:에티하드항공|QTR:카타르항공|ABY:에어아라비아|FDB:플라이두바이|' +
+    'SVA:사우디아|KAC:쿠웨이트항공|GFA:걸프에어|OMA:오만항공|RJA:로열요르단|' +
+    'THY:터키항공|PGT:페가수스항공|ELY:엘알|IRA:이란항공|' +
+    'ETH:에티오피아항공|MSR:이집트항공|RAM:로열 에어 모로코|SAA:남아프리카항공|KQA:케냐항공|' +
+    /* 유럽 */
+    'DLH:루프트한자|CLH:루프트한자 시티라인|EWG:유로윙스|AFR:에어프랑스|BAW:영국항공|' +
+    'KLM:KLM 네덜란드항공|SWR:스위스국제항공|AUA:오스트리아항공|SAS:스칸디나비아항공|' +
+    'FIN:핀에어|IBE:이베리아|VLG:부엘링|AEA:에어유로파|TAP:TAP 포르투갈|' +
+    'ITY:ITA 에어웨이즈|AZA:알이탈리아|LOT:LOT 폴란드항공|CSA:체코항공|' +
+    'AEE:에게안항공|TAR:튀니스에어|BEL:브뤼셀항공|' +
+    'RYR:라이언에어|EZY:이지젯|EJU:이지젯 유럽|WZZ:위즈에어|NOZ:노르위전|NAX:노르위전|' +
+    'VIR:버진애틀랜틱|TOM:TUI 항공|JAF:TUI 벨기에|' +
+    'AFL:아에로플로트|SDM:러시아항공|AUI:우크라이나국제항공|' +
+    /* 미주 · 오세아니아 */
+    'UAL:유나이티드항공|AAL:아메리칸항공|DAL:델타항공|SWA:사우스웨스트항공|' +
+    'JBU:제트블루|ASA:알래스카항공|NKS:스피릿항공|FFT:프론티어항공|HAL:하와이안항공|' +
+    'SKW:스카이웨스트|ENY:엔보이에어|RPA:리퍼블릭항공|' +
+    'ACA:에어캐나다|WJA:웨스트젯|TSC:에어트랜샛|' +
+    'AMX:아에로멕시코|VOI:볼라리스|LAN:LATAM|TAM:LATAM 브라질|GLO:골항공|AZU:아줄항공|' +
+    'AVA:아비앙카|CMP:코파항공|ARG:아르헨티나항공|' +
+    'QFA:콴타스|JST:제트스타|VOZ:버진오스트레일리아|ANZ:에어뉴질랜드|FJI:피지항공|' +
+    /* 화물 */
+    'FDX:페덱스|UPS:UPS 항공|GTI:아틀라스에어|ABW:에어브리지카고|CLX:카고룩스|' +
+    'CKS:칼리타에어|PAC:폴라에어카고|GEC:루프트한자 카고|CAO:중국화물항공|' +
+    'ABX:ABX 에어|BOX:에어로로직|MPH:마틴에어|SQC:싱가포르항공 카고|ETH:에티오피아항공|' +
+    'AJT:아마존 에어|' +
+    /* 저비용 · 기타 */
+    'MAU:에어모리셔스|AIZ:아르키아|LNK:에어링크|SEY:에어세이셸|' +
+    'HND:한드에어|BER:에어베를린'
+  );
+
+  /* ── ADS-B 카테고리 (A0~C3) ───────────────────────────────── */
+  var CATEGORY = expand(
+    'A0:분류 없음|A1:소형기 (15.5t 미만)|A2:중형기 (75t 미만)|A3:대형기 (300t 미만)|' +
+    'A4:대형기 (강한 후류)|A5:초대형기|A6:고성능기|A7:회전익기|' +
+    'B0:분류 없음|B1:글라이더|B2:비행선·기구|B3:낙하산|B4:초경량기|B6:무인기|B7:우주선|' +
+    'C0:지상 이동체|C1:비상 차량|C2:업무 차량|C3:고정 장애물'
+  );
+
+  /* ── 특수 스쿼크 ───────────────────────────────────────────── */
+  var SQUAWK = {
+    '7500': { t: '납치 (Hijack)', lv: 'bad' },
+    '7600': { t: '무선 두절 (Radio failure)', lv: 'bad' },
+    '7700': { t: '비상 (Emergency)', lv: 'bad' }
+  };
+
+  /* ── 등록기호 접두 → 등록국 ────────────────────────────────
+     ADS-B 의 registration 이 있으면 이쪽이 가장 정확하다.
+     긴 접두부터 맞춰 본다. */
+  var REG = [
+    ['HL', '대한민국'], ['JA', '일본'],
+    ['B-H', '홍콩'], ['B-K', '홍콩'], ['B-L', '홍콩'], ['B-M', '마카오'],
+    ['B-1', '중국'], ['B-2', '중국'], ['B-3', '중국'], ['B-5', '중국'],
+    ['B-6', '중국'], ['B-7', '중국'], ['B-8', '중국'], ['B-9', '중국'],
+    ['B-0', '중국'], ['B-4', '중국'], ['B0', '대만'], ['B1', '대만'],
+    ['B2', '대만'], ['B5', '대만'], ['B7', '대만'], ['B9', '대만'], ['B-', '중화권'],
+    ['N', '미국'], ['C-F', '캐나다'], ['C-G', '캐나다'], ['C-', '캐나다'],
+    ['G-', '영국'], ['D-', '독일'], ['F-', '프랑스'], ['I-', '이탈리아'],
+    ['EC-', '스페인'], ['CS-', '포르투갈'], ['PH-', '네덜란드'], ['OO-', '벨기에'],
+    ['HB-', '스위스'], ['OE-', '오스트리아'], ['SE-', '스웨덴'], ['LN-', '노르웨이'],
+    ['OY-', '덴마크'], ['OH-', '핀란드'], ['TF-', '아이슬란드'], ['SP-', '폴란드'],
+    ['OK-', '체코'], ['OM-', '슬로바키아'], ['HA-', '헝가리'], ['YR-', '루마니아'],
+    ['LZ-', '불가리아'], ['9A-', '크로아티아'], ['S5-', '슬로베니아'], ['SX-', '그리스'],
+    ['EI-', '아일랜드'], ['LX-', '룩셈부르크'], ['9H-', '몰타'], ['TC-', '튀르키예'],
+    ['RA-', '러시아'], ['UR-', '우크라이나'], ['4L-', '조지아'], ['UP-', '카자흐스탄'],
+    ['VH-', '호주'], ['ZK-', '뉴질랜드'], ['VT-', '인도'], ['9V-', '싱가포르'],
+    ['9M-', '말레이시아'], ['HS-', '태국'], ['PK-', '인도네시아'], ['RP-', '필리핀'],
+    ['VN-', '베트남'], ['XU-', '캄보디아'], ['RDPL', '라오스'], ['XY-', '미얀마'],
+    ['JU-', '몽골'], ['S2-', '방글라데시'], ['4R-', '스리랑카'], ['AP-', '파키스탄'],
+    ['9N-', '네팔'], ['A6-', '아랍에미리트'], ['A7-', '카타르'], ['A9C', '바레인'],
+    ['HZ-', '사우디아라비아'], ['9K-', '쿠웨이트'], ['A4O', '오만'], ['JY-', '요르단'],
+    ['4X-', '이스라엘'], ['EP-', '이란'], ['SU-', '이집트'], ['ET-', '에티오피아'],
+    ['5Y-', '케냐'], ['ZS-', '남아프리카'], ['CN-', '모로코'], ['TS-', '튀니지'],
+    ['PP-', '브라질'], ['PR-', '브라질'], ['PS-', '브라질'], ['PT-', '브라질'],
+    ['XA-', '멕시코'], ['XB-', '멕시코'], ['CC-', '칠레'], ['LV-', '아르헨티나'],
+    ['HK-', '콜롬비아'], ['HP-', '파나마'], ['OB-', '페루']
+  ];
+
+  /* ── ICAO 24bit 주소 대역 → 등록국 (등록기호가 없을 때의 보조) ── */
+  var HEX = [
+    [0x008000, 0x00FFFF, '남아프리카'], [0x010000, 0x017FFF, '이집트'],
+    [0x040000, 0x047FFF, '에티오피아'], [0x04C000, 0x04FFFF, '케냐'],
+    [0x06A000, 0x06A7FF, '카타르'], [0x0D0000, 0x0D7FFF, '멕시코'],
+    [0x100000, 0x1FFFFF, '러시아'], [0x300000, 0x33FFFF, '이탈리아'],
+    [0x340000, 0x37FFFF, '스페인'], [0x380000, 0x3BFFFF, '프랑스'],
+    [0x3C0000, 0x3FFFFF, '독일'], [0x400000, 0x43FFFF, '영국'],
+    [0x440000, 0x447FFF, '오스트리아'], [0x448000, 0x44FFFF, '벨기에'],
+    [0x458000, 0x45FFFF, '덴마크'], [0x460000, 0x467FFF, '핀란드'],
+    [0x468000, 0x46FFFF, '그리스'], [0x478000, 0x47FFFF, '노르웨이'],
+    [0x480000, 0x487FFF, '네덜란드'], [0x488000, 0x48FFFF, '폴란드'],
+    [0x490000, 0x497FFF, '포르투갈'], [0x4A8000, 0x4AFFFF, '스웨덴'],
+    [0x4B0000, 0x4B7FFF, '스위스'], [0x4B8000, 0x4BBFFF, '튀르키예'],
+    [0x4CA000, 0x4CAFFF, '아일랜드'], [0x508000, 0x50FFFF, '우크라이나'],
+    [0x710000, 0x717FFF, '사우디아라비아'], [0x718000, 0x71FFFF, '대한민국'],
+    [0x720000, 0x727FFF, '조선민주주의인민공화국'], [0x738000, 0x73FFFF, '이스라엘'],
+    [0x750000, 0x757FFF, '말레이시아'], [0x758000, 0x75FFFF, '필리핀'],
+    [0x768000, 0x76FFFF, '싱가포르'], [0x780000, 0x7BFFFF, '중국'],
+    [0x7C0000, 0x7FFFFF, '호주'], [0x800000, 0x83FFFF, '인도'],
+    [0x840000, 0x87FFFF, '일본'], [0x880000, 0x887FFF, '태국'],
+    [0x888000, 0x88FFFF, '베트남'], [0x896000, 0x896FFF, '아랍에미리트'],
+    [0x899000, 0x8993FF, '대만'], [0x8A0000, 0x8A7FFF, '인도네시아'],
+    [0xA00000, 0xAFFFFF, '미국'], [0xC00000, 0xC3FFFF, '캐나다'],
+    [0xC80000, 0xC87FFF, '뉴질랜드'], [0xE00000, 0xE3FFFF, '브라질'],
+    [0xE80000, 0xE80FFF, '칠레'], [0xE84000, 0xE84FFF, '콜롬비아']
+  ];
+
+  function typeName(t) { return t ? (TYPE[t.toUpperCase()] || t.toUpperCase()) : null; }
+
+  /* 편명 "KAL086" → 항공사 "대한항공" + 편번 "086" */
+  function flight(callsign) {
+    if (!callsign) return null;
+    var cs = callsign.trim().toUpperCase();
+    if (cs.length < 4) return null;
+    var name = AIRLINE[cs.slice(0, 3)];
+    if (!name) return null;
+    var num = cs.slice(3).replace(/^0+(?=\d)/, '');
+    return { airline: name, number: num, icao: cs.slice(0, 3) };
+  }
+
+  function category(c) { return c ? (CATEGORY[c.toUpperCase()] || null) : null; }
+  function squawk(s) { return s ? (SQUAWK[s] || null) : null; }
+
+  function country(reg, hex) {
+    if (reg) {
+      var r = reg.trim().toUpperCase(), best = null;
+      for (var i = 0; i < REG.length; i++) {
+        if (r.indexOf(REG[i][0]) === 0 && (!best || REG[i][0].length > best[0].length)) best = REG[i];
+      }
+      if (best) return best[1];
+    }
+    if (hex) {
+      var n = parseInt(hex, 16);
+      if (isFinite(n)) for (var j = 0; j < HEX.length; j++) {
+        if (n >= HEX[j][0] && n <= HEX[j][1]) return HEX[j][2];
+      }
+    }
+    return null;
+  }
+
+  return {
+    typeName: typeName, flight: flight, category: category,
+    squawk: squawk, country: country,
+    TYPE: TYPE, AIRLINE: AIRLINE
+  };
+})();
+
+/* ── 30-orient.js — 기기 자세와 화면 투영 ────────────────────────
+   DeviceOrientation 의 alpha/beta/gamma 는 Z-X'-Y'' 내인 회전이고,
+   하늘을 보려고 폰을 세우면 beta 가 90° 부근 — 바로 짐벌락 지점이다.
+   오일러각을 그대로 평활화하면 그 근처에서 심하게 떨리므로
+   쿼터니언으로 바꿔 slerp 한 뒤 행렬로 되돌린다.
+   ---------------------------------------------------------------- */
+'use strict';
+
+/* ── 쿼터니언 (w,x,y,z) ────────────────────────────────────────── */
+var Quat = {
+  mul: function (a, b) {
+    return [
+      a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+      a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+      a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+      a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]
+    ];
+  },
+  axis: function (ax, ay, az, ang) {
+    var h = ang / 2, s = Math.sin(h);
+    return [Math.cos(h), ax * s, ay * s, az * s];
+  },
+  /* Z-X'-Y'' 내인 회전 = qz(alpha) ⊗ qx(beta) ⊗ qy(gamma) */
+  fromZXY: function (a, b, g) {
+    return Quat.mul(Quat.mul(Quat.axis(0, 0, 1, a), Quat.axis(1, 0, 0, b)),
+                    Quat.axis(0, 1, 0, g));
+  },
+  dot: function (a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]; },
+  neg: function (q) { return [-q[0], -q[1], -q[2], -q[3]]; },
+  norm: function (q) {
+    var n = Math.sqrt(Quat.dot(q, q)) || 1;
+    return [q[0] / n, q[1] / n, q[2] / n, q[3] / n];
+  },
+  slerp: function (a, b, t) {
+    var d = Quat.dot(a, b);
+    if (d < 0) { b = Quat.neg(b); d = -d; }
+    if (d > 0.9995) {                                  // 거의 같으면 선형 보간
+      return Quat.norm([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t,
+                        a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t]);
+    }
+    var th0 = Math.acos(Math.min(1, d)), th = th0 * t;
+    var s0 = Math.cos(th) - d * Math.sin(th) / Math.sin(th0);
+    var s1 = Math.sin(th) / Math.sin(th0);
+    return Quat.norm([a[0] * s0 + b[0] * s1, a[1] * s0 + b[1] * s1,
+                      a[2] * s0 + b[2] * s1, a[3] * s0 + b[3] * s1]);
+  },
+  /* 회전행렬 (기기좌표 → 월드 ENU). 열 우선이 아니라 R[행][열]. */
+  toMat: function (q) {
+    var w = q[0], x = q[1], y = q[2], z = q[3];
+    var xx = x * x, yy = y * y, zz = z * z;
+    return [
+      [1 - 2 * (yy + zz), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+      [2 * (x * y + w * z), 1 - 2 * (xx + zz), 2 * (y * z - w * x)],
+      [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (xx + yy)]
+    ];
+  }
+};
+
+/* ── 자세 추적기 ───────────────────────────────────────────────── */
+var Orient = (function () {
+  var st = {
+    ok: false,              // 이벤트를 한 번이라도 받았는가
+    absolute: false,        // 진북/자북 기준인가 (아니면 방위 신뢰 불가)
+    source: null,           // 'ios' | 'absolute' | 'relative'
+    raw: [1, 0, 0, 0],      // 방금 들어온 자세
+    q: [1, 0, 0, 0],        // 평활화된 자세
+    R: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    screen: 0,              // screen.orientation.angle
+    heading: 0,             // 진북 기준 시계방향, 카메라(뒷면)가 보는 방향
+    pitch: 0,               // 카메라 시선의 고각
+    roll: 0,
+    offset: 0,              // 사용자 보정값(°)
+    manual: false,          // 센서가 없어 드래그로 둘러보는 중인가
+    mh: 0, mp: 12,          // 드래그 모드의 방위·고각
+    tLast: 0,
+    stamp: 0                // 마지막 이벤트 시각
+  };
+
+  var SMOOTH = 14;          // 클수록 반응이 빠르고 대신 떨린다
+
+  function screenAngle() {
+    if (window.screen && window.screen.orientation && typeof window.screen.orientation.angle === 'number') {
+      return window.screen.orientation.angle;
+    }
+    return (typeof window.orientation === 'number') ? window.orientation : 0;
+  }
+
+  /* 드래그 모드에서는 방위를 직접 지정하므로 보정 오프셋을 다시 더하지 않는다 */
+  function eff() { return st.manual ? 0 : st.offset; }
+
+  var absSeen = false;
+
+  function onEvent(e) {
+    if (e.alpha == null && e.beta == null && e.gamma == null) return;
+
+    var ios = typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading);
+
+    /* 안드로이드는 absolute 와 상대 이벤트가 함께 온다. 둘의 alpha 기준이
+       달라 섞어 쓰면 방위가 두 값 사이를 오간다 — 절대 쪽만 받는다. */
+    if (e.type === 'deviceorientationabsolute') absSeen = true;
+    else if (absSeen && !ios) return;
+
+    st.manual = false;
+    var a = e.alpha || 0;
+
+    /* iOS 는 alpha 가 임의 기준이라 쓸 수 없다. webkitCompassHeading 이
+       기기 상단이 향하는 진북 기준 방위이므로 alpha = 360 - heading. */
+    if (ios) {
+      a = Geo.norm360(360 - e.webkitCompassHeading);
+      st.absolute = true; st.source = 'ios';
+    } else if (e.absolute === true || e.type === 'deviceorientationabsolute') {
+      st.absolute = true; st.source = 'absolute';
+    } else if (!st.absolute) {
+      st.source = 'relative';
+    }
+
+    st.raw = Quat.fromZXY(Geo.rad(a), Geo.rad(e.beta || 0), Geo.rad(e.gamma || 0));
+    st.stamp = performance.now();
+    st.ok = true;
+  }
+
+  /* 매 프레임 호출 — dt(초) 만큼 평활화를 진행한다 */
+  function step(dt) {
+    st.screen = screenAngle();
+    if (!st.ok) return;
+    var t = 1 - Math.exp(-SMOOTH * Math.max(0.001, Math.min(0.2, dt)));
+    st.q = Quat.slerp(st.q, st.raw, t);
+    st.R = Quat.toMat(st.q);
+
+    /* 카메라(기기 뒷면)는 기기 -z 를 본다. 월드로 옮기면 R·(0,0,-1) = -R[..][2] */
+    var f = [-st.R[0][2], -st.R[1][2], -st.R[2][2]];
+    st.heading = Geo.norm360(Geo.deg(Math.atan2(f[0], f[1])) + eff());
+    st.pitch = Geo.deg(Math.asin(Math.max(-1, Math.min(1, f[2]))));
+
+    /* 화면에서 지평선이 얼마나 기울어 보이는가.
+       기기 기준으로 재면 가로 화면에서 늘 90° 가까이 나와 쓸모가 없다.
+       월드의 위쪽 벡터를 화면좌표로 옮겨야 뷰포트 기준 기울기가 된다. */
+    var n = toScreenSpace([0, 0, 1]);
+    st.roll = Geo.deg(Math.atan2(n[0], n[1]));
+  }
+
+  /* 월드 ENU 단위벡터 → 화면 정렬 기기좌표.
+     보정 오프셋만큼 월드를 반대로 돌려 준 뒤 Rᵀ 를 적용하고,
+     마지막에 화면 회전 φ 를 더해 뷰포트 축에 맞춘다. */
+  function toScreenSpace(v) {
+    var o = Geo.rad(-eff()), co = Math.cos(o), so = Math.sin(o);
+    /* 오프셋은 위(Z)축 회전 — 방위를 offset 만큼 돌린 것과 같다 */
+    var e = v[0] * co - v[1] * so, n = v[0] * so + v[1] * co, u = v[2];
+    var R = st.R;
+    var dx = R[0][0] * e + R[1][0] * n + R[2][0] * u;   // Rᵀ 1행
+    var dy = R[0][1] * e + R[1][1] * n + R[2][1] * u;
+    var dz = R[0][2] * e + R[1][2] * n + R[2][2] * u;
+    var p = Geo.rad(st.screen), cp = Math.cos(p), sp = Math.sin(p);
+    return [cp * dx - sp * dy, sp * dx + cp * dy, dz];
+  }
+
+  function attach() {
+    var abs = 'ondeviceorientationabsolute' in window;
+    if (abs) window.addEventListener('deviceorientationabsolute', onEvent, true);
+    window.addEventListener('deviceorientation', onEvent, true);
+    if (window.screen && window.screen.orientation) {
+      window.screen.orientation.addEventListener('change', function () { st.screen = screenAngle(); });
+    }
+    window.addEventListener('orientationchange', function () { st.screen = screenAngle(); });
+    st.screen = screenAngle();
+  }
+
+  /* iOS 13+ 는 사용자 제스처 안에서 명시적 허가를 받아야 한다 */
+  function request() {
+    var D = window.DeviceOrientationEvent;
+    if (D && typeof D.requestPermission === 'function') {
+      return D.requestPermission().then(function (r) {
+        if (r !== 'granted') throw new Error('방향 센서 권한이 거부되었습니다');
+        attach(); return true;
+      });
+    }
+    attach();
+    return Promise.resolve(true);
+  }
+
+  /* 이벤트가 끊겼는지 — 3초 넘게 조용하면 센서 없음으로 본다 */
+  function stale() { return st.manual ? false : (!st.ok || (performance.now() - st.stamp) > 3000); }
+  /* 진짜 센서가 살아 있는지 (드래그 모드는 제외) */
+  function usable() { return st.ok && !st.manual && (performance.now() - st.stamp) <= 3000; }
+
+  /* 드래그로 둘러보기.
+     ZXY 오일러에서 카메라가 (h, p) 를 보게 하려면 alpha=-h, beta=90+p, gamma=0.
+     (R 의 3열이 기기 +z 이고 카메라는 -z 를 보므로 그렇게 떨어진다.) */
+  function setManual(h, p) {
+    st.manual = true; st.absolute = true; st.source = 'manual'; st.ok = true;
+    st.mh = Geo.norm360(h);
+    st.mp = Math.max(-88, Math.min(88, p));
+    st.raw = Quat.fromZXY(Geo.rad(-st.mh), Geo.rad(90 + st.mp), 0);
+    st.stamp = performance.now();
+  }
+
+  return {
+    state: st, step: step, request: request, attach: attach,
+    toScreenSpace: toScreenSpace, stale: stale, usable: usable, setManual: setManual,
+    setOffset: function (d) { st.offset = d; }
+  };
+})();
+
+/* ── 화면 투영 ─────────────────────────────────────────────────
+   카메라 영상은 object-fit:cover 로 화면을 덮는다. 광축은 뷰포트
+   한가운데에 오고, 수평 화각은 "잘리기 전 영상 전체 폭"에 대응하므로
+   초점거리는 그 폭을 기준으로 잡아야 실제 하늘과 맞는다. */
+var View = (function () {
+  var st = { w: 0, h: 0, dpr: 1, fov: 67, f: 600, cx: 0, cy: 0, vw: 0, vh: 0 };
+
+  function resize(w, h, dpr) { st.w = w; st.h = h; st.dpr = dpr || 1; recalc(); }
+  function video(vw, vh) { st.vw = vw || 0; st.vh = vh || 0; recalc(); }
+  function setFov(d) { st.fov = Math.max(25, Math.min(120, d)); recalc(); }
+
+  function recalc() {
+    st.cx = st.w / 2; st.cy = st.h / 2;
+    if (st.vw > 0 && st.vh > 0 && st.w > 0 && st.h > 0) {
+      /* 카메라 영상이 있을 때: 화각은 잘리기 전 영상 전체 폭에 대응한다 */
+      var scale = Math.max(st.w / st.vw, st.h / st.vh);   // object-fit: cover
+      st.f = (st.vw * scale / 2) / Math.tan(Geo.rad(st.fov) / 2);
+    } else {
+      /* 카메라가 없을 때: 화각을 화면의 긴 축에 준다. 세로 화면의 가로에
+         맞추면 세로 시야가 100° 를 넘어 하늘이 지나치게 넓게 퍼진다. */
+      var long = Math.max(st.w, st.h) || 1;
+      st.f = (long / 2) / Math.tan(Geo.rad(st.fov) / 2);
+    }
+  }
+
+  /* 방위·고각 → 화면 픽셀. 뒤쪽이면 front=false 이고 좌표는 방향만 유효하다. */
+  function project(az, el) {
+    var d = Orient.toScreenSpace(Geo.enu(az, el));
+    var depth = -d[2];                                   // 카메라는 -z 방향
+    if (depth <= 0.0001) {
+      /* 시야 뒤 — 화면 밖 지시자를 그리려고 방향만 되돌린다 */
+      var m = Math.sqrt(d[0] * d[0] + d[1] * d[1]) || 1e-6;
+      return { x: st.cx + (d[0] / m) * st.w, y: st.cy - (d[1] / m) * st.h,
+               front: false, depth: depth };
+    }
+    return {
+      x: st.cx + st.f * (d[0] / depth),
+      y: st.cy - st.f * (d[1] / depth),
+      front: true, depth: depth
+    };
+  }
+
+  /* 화면 픽셀이 시야 안(여유 포함)인지 */
+  function onScreen(p, pad) {
+    pad = pad || 0;
+    return p.front && p.x > -pad && p.x < st.w + pad && p.y > -pad && p.y < st.h + pad;
+  }
+
+  /* 현재 초점거리에서의 실제 수직 화각 — 눈금자 그릴 때 쓴다 */
+  function vFov() { return Geo.deg(2 * Math.atan((st.h / 2) / st.f)); }
+
+  return { state: st, resize: resize, video: video, setFov: setFov,
+           project: project, onScreen: onScreen, vFov: vFov };
+})();
+
+/* ── 32-sensors.js — 위치와 카메라 ──────────────────────────────
+   권한은 반드시 사용자 제스처 안에서 요청한다. iOS 는 그 밖에서 부르면
+   조용히 거부되고, 카메라는 https(또는 localhost) 가 아니면 아예 없다.
+   ---------------------------------------------------------------- */
+'use strict';
+
+var Position = (function () {
+  var st = {
+    ok: false, lat: null, lon: null, alt: 0, acc: null,
+    ts: 0, err: null, watching: false, manual: false
+  };
+  var subs = [], watchId = null;
+
+  function emit() { for (var i = 0; i < subs.length; i++) subs[i](st); }
+
+  function accept(p) {
+    st.ok = true; st.err = null; st.manual = false;
+    st.lat = p.coords.latitude; st.lon = p.coords.longitude;
+    st.alt = (p.coords.altitude != null && isFinite(p.coords.altitude)) ? p.coords.altitude : 0;
+    st.acc = p.coords.accuracy;
+    st.ts = Date.now();
+    emit();
+  }
+
+  function fail(e) {
+    st.err = e && e.code === 1 ? '위치 권한이 거부되었습니다'
+           : e && e.code === 3 ? '위치를 얻는 데 시간이 너무 오래 걸립니다'
+           : '위치를 확인할 수 없습니다';
+    emit();
+  }
+
+  /* 한 번 즉시 받아 오고, 이어서 계속 지켜본다 */
+  function start() {
+    if (!navigator.geolocation) {
+      st.err = '이 브라우저는 위치 기능을 지원하지 않습니다'; emit();
+      return Promise.reject(new Error(st.err));
+    }
+    return new Promise(function (res, rej) {
+      navigator.geolocation.getCurrentPosition(function (p) {
+        accept(p); watch(); res(st);
+      }, function (e) {
+        fail(e); watch(); rej(new Error(st.err));
+      }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+    });
+  }
+
+  function watch() {
+    if (st.watching || !navigator.geolocation) return;
+    st.watching = true;
+    watchId = navigator.geolocation.watchPosition(accept, function (e) {
+      if (!st.ok) fail(e);          // 이미 좌표가 있으면 일시적 실패는 무시
+    }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 });
+  }
+
+  function stop() {
+    if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    watchId = null; st.watching = false;
+  }
+
+  /* 위치를 못 쓰는 환경(데스크톱 등)에서 좌표를 직접 넣는다 */
+  function set(lat, lon, alt) {
+    st.ok = true; st.manual = true; st.err = null;
+    st.lat = lat; st.lon = lon; st.alt = alt || 0; st.acc = null; st.ts = Date.now();
+    emit();
+  }
+
+  return { state: st, start: start, stop: stop, set: set,
+           on: function (f) { subs.push(f); } };
+})();
+
+var Camera = (function () {
+  var st = { on: false, err: null, w: 0, h: 0, label: '' };
+  var stream = null, el = null;
+
+  function bind(video) { el = video; }
+
+  function start() {
+    if (st.on) return Promise.resolve(st);
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      st.err = 'https 연결이 아니거나 카메라를 지원하지 않는 브라우저입니다';
+      return Promise.reject(new Error(st.err));
+    }
+    return navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1920 }, height: { ideal: 1080 }
+      }
+    }).then(function (s) {
+      stream = s;
+      var track = s.getVideoTracks()[0];
+      st.label = track ? track.label : '';
+      el.srcObject = s;
+      return el.play().catch(function () { /* 자동재생 차단은 무시 — muted 라 대개 통과한다 */ });
+    }).then(function () {
+      return new Promise(function (res) {
+        if (el.videoWidth) return res();
+        el.addEventListener('loadedmetadata', function h() {
+          el.removeEventListener('loadedmetadata', h); res();
+        });
+        setTimeout(res, 2500);
+      });
+    }).then(function () {
+      st.on = true; st.err = null;
+      st.w = el.videoWidth || 0; st.h = el.videoHeight || 0;
+      el.classList.remove('off');
+      return st;
+    }).catch(function (e) {
+      st.on = false;
+      st.err = (e && e.name === 'NotAllowedError') ? '카메라 권한이 거부되었습니다'
+             : (e && e.name === 'NotFoundError') ? '뒷면 카메라를 찾을 수 없습니다'
+             : (e && e.message) || '카메라를 열 수 없습니다';
+      throw new Error(st.err);
+    });
+  }
+
+  function stop() {
+    if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+    stream = null; st.on = false; st.w = 0; st.h = 0;
+    if (el) { el.srcObject = null; el.classList.add('off'); }
+  }
+
+  /* 영상 비율로부터 그럴듯한 기본 수평화각을 고른다.
+     휴대폰 메인 카메라의 긴 축 화각은 대략 65~70° 이므로 거기에 맞춘다. */
+  function guessFov() {
+    if (!st.w || !st.h) return 67;
+    var longFov = 67;
+    if (st.w >= st.h) return longFov;
+    return Geo.deg(2 * Math.atan(Math.tan(Geo.rad(longFov) / 2) * st.w / st.h));
+  }
+
+  return { state: st, bind: bind, start: start, stop: stop, guessFov: guessFov };
+})();
+
+/* ── 40-source.js — ADS-B 수신과 추측항법 ────────────────────────
+   공개 피드는 몇 초에 한 번만 갱신되지만 화면은 60fps 로 움직인다.
+   그래서 마지막 관측을 속도·기수·상승률로 앞당겨 계산(추측항법)하고,
+   새 관측이 오면 튀지 않도록 표시 위치를 그쪽으로 서서히 끌어당긴다.
+   ---------------------------------------------------------------- */
+'use strict';
+
+var Source = (function () {
+
+  /* ── 공급자 ────────────────────────────────────────────────
+     앞의 것부터 시도하고, 실패하면 다음으로 넘어가 그 자리를 기억한다. */
+  var PROVIDERS = [
+    { id: 'adsb.lol', name: 'adsb.lol', kind: 'readsb', max: 250,
+      url: function (la, lo, nm) { return 'https://api.adsb.lol/v2/lat/' + la.toFixed(4) + '/lon/' + lo.toFixed(4) + '/dist/' + nm; } },
+    { id: 'adsb.fi', name: 'adsb.fi', kind: 'readsb', max: 250,
+      url: function (la, lo, nm) { return 'https://opendata.adsb.fi/api/v2/lat/' + la.toFixed(4) + '/lon/' + lo.toFixed(4) + '/dist/' + nm; } },
+    { id: 'airplanes.live', name: 'airplanes.live', kind: 'readsb', max: 250,
+      url: function (la, lo, nm) { return 'https://api.airplanes.live/v2/point/' + la.toFixed(4) + '/' + lo.toFixed(4) + '/' + nm; } },
+    { id: 'opensky', name: 'OpenSky', kind: 'opensky', max: 400,
+      url: function (la, lo, nm) {
+        var b = Geo.degBox(la, Geo.nmToM(nm));
+        return 'https://opensky-network.org/api/states/all?lamin=' + (la - b.dLat).toFixed(4) +
+               '&lomin=' + (lo - b.dLon).toFixed(4) + '&lamax=' + (la + b.dLat).toFixed(4) +
+               '&lomax=' + (lo + b.dLon).toFixed(4);
+      } }
+  ];
+
+  var st = {
+    provider: 0, providerName: PROVIDERS[0].name,
+    demo: false, live: false,
+    lastOk: 0, lastTry: 0, lastErr: null, fails: 0,
+    count: 0, fetching: false, latency: 0
+  };
+
+  var fleet = Object.create(null);     // id → 항공기
+  var subs = [];
+  var timer = null, ctl = null;
+  var cfg = { radiusNm: 120, intervalMs: 6000, maxAgeMs: 75000 };
+
+  function on(f) { subs.push(f); }
+  function emit() { for (var i = 0; i < subs.length; i++) subs[i](fleet, st); }
+
+  /* ── 응답 정규화 ──────────────────────────────────────────── */
+
+  function numOr(v, d) {
+    var n = typeof v === 'string' ? parseFloat(v) : v;
+    return (typeof n === 'number' && isFinite(n)) ? n : d;
+  }
+
+  /* fetch 가 주는 영문 사유를 화면에 그대로 띄우면 무슨 일인지 알 수 없다 */
+  function errText(e) {
+    if (!e) return '수신 실패';
+    if (e.name === 'AbortError') return '응답 없음 — 요청 취소';
+    var m = String(e.message || '');
+    if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return '수신 실패 — 네트워크';
+    var http = m.match(/HTTP (\d+)/);
+    if (http) {
+      var c = http[1];
+      if (c === '429') return '요청이 너무 잦습니다 — 주기를 늘려 보세요';
+      if (c[0] === '5') return '공급자 서버 오류 (' + c + ')';
+      return '수신 거부 (' + c + ')';
+    }
+    return '수신 실패';
+  }
+
+  function normReadsb(json, nowMs) {
+    var list = json.ac || json.aircraft || [];
+    var srvNow = numOr(json.now, nowMs);
+    if (srvNow < 1e12) srvNow *= 1000;                  // 초 단위로 준 경우
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var a = list[i];
+      var lat = numOr(a.lat, null), lon = numOr(a.lon, null);
+      if (lat == null || lon == null) continue;
+      var ground = a.alt_baro === 'ground' || a.alt_geom === 'ground';
+      var baro = ground ? 0 : numOr(a.alt_baro, null);
+      var geom = ground ? 0 : numOr(a.alt_geom, null);
+      var seen = numOr(a.seen_pos, numOr(a.seen, 0));
+      out.push({
+        id: String(a.hex || a.r || i).toLowerCase().replace('~', ''),
+        cs: (a.flight || '').trim() || null,
+        reg: a.r || null,
+        type: a.t || null,
+        desc: a.desc || null,
+        cat: a.category || null,
+        lat: lat, lon: lon,
+        altFt: geom != null ? geom : baro,               // 기하고도가 있으면 그쪽이 실제 높이에 가깝다
+        baroFt: baro,
+        gs: numOr(a.gs, null),
+        track: numOr(a.track, numOr(a.mag_heading, null)),
+        vsFpm: numOr(a.geom_rate, numOr(a.baro_rate, null)),
+        squawk: a.squawk || null,
+        ground: ground,
+        emg: (a.emergency && a.emergency !== 'none') ? a.emergency : null,
+        tPos: srvNow - seen * 1000
+      });
+    }
+    return out;
+  }
+
+  function normOpenSky(json, nowMs) {
+    var rows = json.states || [];
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+      var s = rows[i];
+      if (s[5] == null || s[6] == null) continue;
+      var baroM = s[7], geoM = s[13];
+      var altM = (geoM != null ? geoM : baroM);
+      out.push({
+        id: String(s[0] || i).toLowerCase(),
+        cs: (s[1] || '').trim() || null,
+        reg: null, type: null, desc: null, cat: null,
+        lat: s[6], lon: s[5],
+        altFt: altM != null ? Geo.mToFt(altM) : null,
+        baroFt: baroM != null ? Geo.mToFt(baroM) : null,
+        gs: s[9] != null ? s[9] / Geo.KT : null,
+        track: s[10],
+        vsFpm: s[11] != null ? Geo.mToFt(s[11]) * 60 : null,
+        squawk: s[14] || null,
+        ground: !!s[8],
+        emg: null,
+        country: s[2] || null,
+        tPos: (s[3] != null ? s[3] : s[4]) * 1000
+      });
+    }
+    return out;
+  }
+
+  /* ── 함대 갱신 ────────────────────────────────────────────── */
+
+  function ingest(rows, nowMs) {
+    var seen = Object.create(null);
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (!r.id) continue;
+      seen[r.id] = 1;
+      var a = fleet[r.id];
+      if (!a) {
+        a = fleet[r.id] = {
+          id: r.id, first: nowMs,
+          dlat: r.lat, dlon: r.lon, daltFt: r.altFt || 0   // 표시 위치 초기값
+        };
+      }
+      /* 관측값 덮어쓰기 — 다만 빈 값으로 기존 정보를 지우지는 않는다 */
+      a.cs = r.cs || a.cs; a.reg = r.reg || a.reg; a.type = r.type || a.type;
+      a.desc = r.desc || a.desc; a.cat = r.cat || a.cat; a.country = r.country || a.country;
+      a.lat = r.lat; a.lon = r.lon;
+      a.altFt = r.altFt != null ? r.altFt : a.altFt;
+      a.baroFt = r.baroFt != null ? r.baroFt : a.baroFt;
+      a.gs = r.gs != null ? r.gs : a.gs;
+      a.track = r.track != null ? r.track : a.track;
+      a.vsFpm = r.vsFpm != null ? r.vsFpm : a.vsFpm;
+      a.squawk = r.squawk || a.squawk;
+      a.emg = r.emg || null;
+      a.ground = r.ground;
+      a.tPos = r.tPos || nowMs;
+      a.tSeen = nowMs;
+    }
+    /* 오래된 것 정리 */
+    for (var k in fleet) {
+      if (!seen[k] && nowMs - (fleet[k].tSeen || 0) > cfg.maxAgeMs) delete fleet[k];
+    }
+    st.count = Object.keys(fleet).length;
+  }
+
+  /* ── 조회 ─────────────────────────────────────────────────── */
+
+  function fetchOnce() {
+    var p = Position.state;
+    if (!p.ok || st.demo) return Promise.resolve();
+    if (st.fetching) return Promise.resolve();
+    st.fetching = true; st.lastTry = Date.now();
+
+    var prov = PROVIDERS[st.provider];
+    var nm = Math.min(prov.max, Math.max(5, Math.round(cfg.radiusNm)));
+    var url = prov.url(p.lat, p.lon, nm);
+    var t0 = performance.now();
+
+    if (ctl) try { ctl.abort(); } catch (e) {}
+    ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timeout = setTimeout(function () { if (ctl) try { ctl.abort(); } catch (e) {} }, 12000);
+
+    return fetch(url, { signal: ctl ? ctl.signal : undefined, cache: 'no-store',
+                        headers: { 'Accept': 'application/json' } })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (json) {
+        clearTimeout(timeout);
+        var now = Date.now();
+        st.latency = Math.round(performance.now() - t0);
+        ingest(prov.kind === 'opensky' ? normOpenSky(json, now) : normReadsb(json, now), now);
+        st.lastOk = now; st.lastErr = null; st.fails = 0; st.live = true;
+        st.providerName = prov.name;
+        emit();
+      })
+      .catch(function (e) {
+        clearTimeout(timeout);
+        st.fails++;
+        st.lastErr = errText(e);
+        /* 두 번 연속 실패하면 다음 공급자로 */
+        if (st.fails >= 2 && PROVIDERS.length > 1) {
+          st.provider = (st.provider + 1) % PROVIDERS.length;
+          st.providerName = PROVIDERS[st.provider].name;
+          st.fails = 0;
+        }
+        if (Date.now() - st.lastOk > cfg.maxAgeMs) st.live = false;
+        emit();
+      })
+      .then(function () { st.fetching = false; });
+  }
+
+  function start() {
+    stop();
+    if (st.demo) { Demo.start(); return; }
+    fetchOnce();
+    timer = setInterval(function () {
+      if (st.demo) return;
+      if (document.hidden) return;             // 화면이 꺼져 있으면 조회하지 않는다
+      fetchOnce();
+    }, cfg.intervalMs);
+  }
+
+  function stop() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    Demo.stop();
+  }
+
+  function setDemo(v) {
+    st.demo = !!v;
+    for (var k in fleet) delete fleet[k];
+    st.count = 0;
+    start();
+  }
+
+  function setProvider(i) {
+    st.provider = ((i % PROVIDERS.length) + PROVIDERS.length) % PROVIDERS.length;
+    st.providerName = PROVIDERS[st.provider].name;
+    st.fails = 0;
+    if (!st.demo) fetchOnce();
+  }
+
+  function setRadius(nm) { cfg.radiusNm = nm; }
+  function setInterval_(ms) {
+    cfg.intervalMs = Math.max(3000, ms);
+    if (timer) start();
+  }
+
+  /* ── 추측항법 + 관측자 기준 기하 ──────────────────────────────
+     매 프레임 호출한다. 반환은 거리 순으로 정렬된 가시 목록. */
+  function advance(nowMs, dt) {
+    var p = Position.state;
+    var out = [];
+    var pull = 1 - Math.exp(-3.2 * Math.max(0.001, Math.min(0.5, dt)));   // 새 관측으로 끌어당기는 정도
+
+    for (var k in fleet) {
+      var a = fleet[k];
+      if (a.lat == null) continue;
+
+      /* 마지막 관측을 지금 시각까지 앞당긴다 */
+      var age = Math.max(0, (nowMs - (a.tPos || nowMs)) / 1000);
+      var tlat = a.lat, tlon = a.lon;
+      if (a.gs > 5 && a.track != null && age > 0 && age < 300) {
+        var d = Geo.ktToMps(a.gs) * age;
+        var q = Geo.destination(a.lat, a.lon, a.track, d);
+        tlat = q.lat; tlon = q.lon;
+      }
+      var talt = (a.altFt || 0) + (a.vsFpm ? (a.vsFpm / 60) * Math.min(age, 120) : 0);
+
+      /* 튐 없이 따라가기 */
+      if (a.dlat == null) { a.dlat = tlat; a.dlon = tlon; a.daltFt = talt; }
+      a.dlat += (tlat - a.dlat) * pull;
+      a.dlon += Geo.norm180(tlon - a.dlon) * pull;
+      a.daltFt += (talt - a.daltFt) * pull;
+      a.age = age;
+
+      if (!p.ok) continue;
+
+      /* 관측자 기준 방위·고각·거리 */
+      var ground = Geo.haversine(p.lat, p.lon, a.dlat, a.dlon);
+      var dh = Geo.ftToM(a.daltFt || 0) - (p.alt || 0);
+      a.distM = ground;
+      a.az = Geo.bearing(p.lat, p.lon, a.dlat, a.dlon);
+      a.el = Geo.elevation(ground, dh);
+      a.slantM = Geo.slant(ground, dh);
+      /* 관측자에서 본 상대 기수 — 마커 글리프를 돌리는 데 쓴다 */
+      a.relTrack = a.track != null ? Geo.norm360(a.track - a.az) : null;
+      out.push(a);
+    }
+    out.sort(function (x, y) { return x.slantM - y.slantM; });
+    return out;
+  }
+
+  return {
+    state: st, fleet: fleet, cfg: cfg, PROVIDERS: PROVIDERS,
+    on: on, start: start, stop: stop, fetchOnce: fetchOnce, advance: advance,
+    setDemo: setDemo, setProvider: setProvider, setRadius: setRadius,
+    setInterval: setInterval_,
+    _ingest: ingest, _normReadsb: normReadsb, _normOpenSky: normOpenSky
+  };
+})();
+
+/* ── 45-demo.js — 데모 항공기 생성기 ─────────────────────────────
+   센서도 통신도 없는 곳(데스크톱, 실내, 권한 거부)에서 화면을 확인하려고
+   쓴다. 실제 피드와 같은 모양의 관측 행을 만들어 Source 에 그대로 넣는다.
+   ---------------------------------------------------------------- */
+'use strict';
+
+var Demo = (function () {
+  var timer = null, sim = [], t0 = 0;
+  var DEFAULT = { lat: 37.5665, lon: 126.9780, alt: 38 };   // 서울시청
+
+  var SEED = [
+    /* 순항 중인 여객기 — 멀고 높다 */
+    { cs: 'KAL086', reg: 'HL8008', t: 'B77W', d: 62, b: 285, alt: 37000, gs: 472, trk: 68,  vs: 0 },
+    { cs: 'AAR221', reg: 'HL8381', t: 'A359', d: 41, b: 205, alt: 34000, gs: 455, trk: 355, vs: 0 },
+    { cs: 'JAL954', reg: 'JA773J', t: 'B788', d: 88, b: 118, alt: 39000, gs: 488, trk: 246, vs: 0 },
+    { cs: 'CPA411', reg: 'B-KQK',  t: 'B77W', d: 105,b: 168, alt: 41000, gs: 501, trk: 12,  vs: 0 },
+    { cs: 'UAE322', reg: 'A6-EQK', t: 'B77W', d: 74, b: 320, alt: 36000, gs: 465, trk: 128, vs: 0 },
+    { cs: 'FDX5108',reg: 'N572FE', t: 'B77L', d: 53, b: 47,  alt: 33000, gs: 448, trk: 212, vs: 0 },
+    /* 인천으로 접근 중 — 낮아지며 가까워진다 */
+    { cs: 'JJA1204',reg: 'HL8322', t: 'B738', d: 22, b: 262, alt: 11500, gs: 268, trk: 82,  vs: -1450 },
+    { cs: 'TWB712', reg: 'HL8501', t: 'B38M', d: 31, b: 240, alt: 16800, gs: 305, trk: 71,  vs: -1900 },
+    /* 김포에서 이륙 상승 중 */
+    { cs: 'ABL8523',reg: 'HL8394', t: 'A321', d: 14, b: 194, alt: 7200,  gs: 241, trk: 168, vs: 2350 },
+    { cs: 'JNA1205',reg: 'HL8021', t: 'B738', d: 9,  b: 226, alt: 4100,  gs: 212, trk: 205, vs: 2800 },
+    /* 저고도 — 헬기와 자가용기 */
+    { cs: 'HL9613', reg: 'HL9613', t: 'A139', d: 4,  b: 95,  alt: 1400,  gs: 118, trk: 300, vs: 0 },
+    { cs: 'HL1234', reg: 'HL1234', t: 'C172', d: 7,  b: 340, alt: 2800,  gs: 96,  trk: 145, vs: 260 }
+  ];
+
+  function build() {
+    var p = Position.state.ok ? Position.state : DEFAULT;
+    sim = SEED.map(function (s, i) {
+      var q = Geo.destination(p.lat, p.lon, s.b, Geo.nmToM(s.d));
+      return {
+        id: (0x718000 + i * 0x137 + 0x2a).toString(16),
+        cs: s.cs, reg: s.reg, type: s.t,
+        lat: q.lat, lon: q.lon, altFt: s.alt,
+        gs: s.gs, track: s.trk, vsFpm: s.vs,
+        squawk: ('0000' + (1000 + i * 137 % 6000)).slice(-4),
+        turn: (i % 3 === 0) ? (i % 2 ? 0.12 : -0.09) : 0   // 살짝 선회시켜 정지 화면처럼 보이지 않게
+      };
+    });
+    t0 = Date.now();
+  }
+
+  function step() {
+    var now = Date.now(), dt = 1.0;
+    var rows = sim.map(function (a) {
+      if (a.turn) a.track = Geo.norm360(a.track + a.turn * dt);
+      var q = Geo.destination(a.lat, a.lon, a.track, Geo.ktToMps(a.gs) * dt);
+      a.lat = q.lat; a.lon = q.lon;
+      if (a.vsFpm) {
+        a.altFt += (a.vsFpm / 60) * dt;
+        /* 순항고도나 접지 부근에 닿으면 수직속도를 접는다 */
+        if (a.altFt > 41000) { a.altFt = 41000; a.vsFpm = 0; }
+        if (a.altFt < 900) { a.altFt = 900; a.vsFpm = 0; a.gs = Math.max(140, a.gs - 6); }
+      }
+      return {
+        id: a.id, cs: a.cs, reg: a.reg, type: a.type, desc: null, cat: null,
+        lat: a.lat, lon: a.lon,
+        altFt: a.altFt, baroFt: a.altFt - 180,
+        gs: a.gs, track: a.track, vsFpm: a.vsFpm,
+        squawk: a.squawk, ground: false, emg: null,
+        tPos: now - 800                    // 실제 피드처럼 살짝 지연시켜 추측항법도 함께 검증한다
+      };
+    });
+    Source._ingest(rows, now);
+    Source.state.live = true;
+    Source.state.lastOk = now;
+    Source.state.count = rows.length;
+    Source.state.providerName = '데모';
+  }
+
+  function start() {
+    stop();
+    if (!Position.state.ok) Position.set(DEFAULT.lat, DEFAULT.lon, DEFAULT.alt);
+    build();
+    step();
+    timer = setInterval(step, 1000);
+  }
+
+  function stop() { if (timer) clearInterval(timer); timer = null; }
+
+  return { start: start, stop: stop, DEFAULT: DEFAULT,
+           get elapsed() { return (Date.now() - t0) / 1000; } };
+})();
+
+/* ── 50-render.js — HUD 오버레이와 레이더 스코프 ─────────────────
+   지평선·고각 눈금은 실제 투영으로 그린다. 폰을 기울이면 같이 기울어야
+   카메라 영상과 어긋나지 않기 때문. 반대로 상단 방위 리본은 늘 수평으로
+   둔다 — 기울어진 눈금은 읽기 어렵다.
+   ---------------------------------------------------------------- */
+'use strict';
+
+var Render = (function () {
+  var cv, cx, sv, sx;                       // 메인 캔버스 / 스코프 캔버스
+  var W = 0, H = 0, DPR = 1, SAFE_T = 0;
+  var reserved = [];                        // UI 가 덮는 자리 — 라벨을 놓지 않는다
+  var SW = 0, SH = 0;                       // 스코프 크기
+  var hit = [];                             // 이번 프레임의 마커 히트박스
+  var scopeHit = [];
+
+  var FONT = '"IBM Plex Mono","D2Coding",ui-monospace,monospace';
+  var SANS = '"IBM Plex Sans KR",-apple-system,sans-serif';
+
+  /* 고도대별 색 — 레이더 관습대로 낮을수록 따뜻하게 */
+  function altColor(ft) {
+    if (ft == null || !isFinite(ft)) return '#8FA3A8';
+    if (ft < 3000)  return '#FF6B5E';
+    if (ft < 8000)  return '#FF9F45';
+    if (ft < 15000) return '#FFD24B';
+    if (ft < 24000) return '#7DE88C';
+    if (ft < 33000) return '#5FE3A1';
+    return '#6FD8FF';
+  }
+
+  function init(canvas, scope) {
+    cv = canvas; cx = cv.getContext('2d');
+    sv = scope; sx = sv.getContext('2d');
+  }
+
+  function resize() {
+    DPR = Math.min(2.5, window.devicePixelRatio || 1);
+    var r = cv.getBoundingClientRect();
+    W = Math.max(1, Math.round(r.width)); H = Math.max(1, Math.round(r.height));
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    View.resize(W, H, DPR);
+
+    var probe = document.getElementById('probe');
+    SAFE_T = probe ? probe.getBoundingClientRect().height : 0;
+
+    /* 상태 칩·세로 툴바·스코프가 앉은 자리를 미리 막아 둔다.
+       그러지 않으면 라벨이 버튼 뒤로 들어가 읽을 수 없게 된다. */
+    var host = cv.getBoundingClientRect();
+    reserved = ['#top', '#tools', '#scope'].map(function (sel) {
+      var n = document.querySelector(sel);
+      if (!n) return null;
+      var b = n.getBoundingClientRect();
+      if (!b.width || !b.height) return null;
+      return [b.left - host.left - 6, b.top - host.top - 6, b.width + 12, b.height + 12];
+    }).filter(Boolean);
+
+    /* 시트가 열려 스코프가 숨겨져 있으면 크기가 0 으로 잡힌다.
+       그대로 반영하면 시트를 닫아도 스코프가 빈 채로 남는다. */
+    var sr = sv.getBoundingClientRect();
+    if (sr.width > 0 && sr.height > 0) {
+      SW = Math.round(sr.width); SH = Math.round(sr.height);
+      sv.width = Math.round(SW * DPR); sv.height = Math.round(SH * DPR);
+      sx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+  }
+
+  /* ── 조각들 ───────────────────────────────────────────────── */
+
+  function roundRect(g, x, y, w, h, r) {
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r);
+    g.closePath();
+  }
+
+  /* 항공기 평면 실루엣. 위쪽이 진행 방향. */
+  function planeGlyph(g, s) {
+    g.beginPath();
+    g.moveTo(0, -s);                       // 기수
+    g.lineTo(s * 0.20, -s * 0.30);
+    g.lineTo(s * 1.00, s * 0.16);          // 오른쪽 날개
+    g.lineTo(s * 1.00, s * 0.40);
+    g.lineTo(s * 0.18, s * 0.24);
+    g.lineTo(s * 0.16, s * 0.66);
+    g.lineTo(s * 0.46, s * 0.92);          // 오른쪽 수평미익
+    g.lineTo(s * 0.46, s * 1.06);
+    g.lineTo(0, s * 0.88);
+    g.lineTo(-s * 0.46, s * 1.06);
+    g.lineTo(-s * 0.46, s * 0.92);
+    g.lineTo(-s * 0.16, s * 0.66);
+    g.lineTo(-s * 0.18, s * 0.24);
+    g.lineTo(-s * 1.00, s * 0.40);
+    g.lineTo(-s * 1.00, s * 0.16);
+    g.lineTo(-s * 0.20, -s * 0.30);
+    g.closePath();
+  }
+
+  /* 볼록 다각형을 반평면으로 자른다 (Sutherland–Hodgman).
+     지평선은 투영 중심을 지나는 평면이라 화면에서는 늘 직선이다. */
+  function clipHalf(poly, inside, cross) {
+    var out = [];
+    for (var i = 0; i < poly.length; i++) {
+      var a = poly[i], b = poly[(i + 1) % poly.length];
+      var ia = inside(a), ib = inside(b);
+      if (ia) out.push(a);
+      if (ia !== ib) out.push(cross(a, b));
+    }
+    return out;
+  }
+
+  /* 카메라가 없을 때의 하늘·지면. 월드의 위쪽 벡터를 화면좌표로 옮기면
+     지평선의 직선 방정식이 바로 떨어진다:  nx·u + ny·v = nz  (u,v 는 정규화 좌표) */
+  function synth(g) {
+    var n = Orient.toScreenSpace([0, 0, 1]);
+    var f = View.state.f, cx0 = W / 2, cy0 = H / 2;
+    var val = function (p) { return n[0] * (p[0] - cx0) / f + n[1] * (cy0 - p[1]) / f - n[2]; };
+
+    /* 화면 중앙 열에서의 지평선 높이 — 하늘 그러데이션의 기준점 */
+    var hy = Math.abs(n[1]) > 1e-6 ? (cy0 - (n[2] * f - n[0] * 0) / n[1]) : (n[2] > 0 ? -H : 2 * H);
+    hy = Math.max(-H, Math.min(2 * H, hy));
+
+    var sky = g.createLinearGradient(0, hy - H * 1.15, 0, hy);
+    sky.addColorStop(0, '#03101A');
+    sky.addColorStop(0.55, '#072434');
+    sky.addColorStop(1, '#0E3D55');
+    g.fillStyle = sky;
+    g.fillRect(0, 0, W, H);
+
+    var rect = [[0, 0], [W, 0], [W, H], [0, H]];
+    var ground = clipHalf(rect, function (p) { return val(p) < 0; }, function (a, b) {
+      var va = val(a), vb = val(b), t = va / (va - vb);
+      return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    });
+    if (ground.length > 2) {
+      var gg = g.createLinearGradient(0, hy, 0, hy + H * 0.9);
+      gg.addColorStop(0, '#0A2417');
+      gg.addColorStop(1, '#030B07');
+      g.fillStyle = gg;
+      g.beginPath();
+      g.moveTo(ground[0][0], ground[0][1]);
+      for (var i = 1; i < ground.length; i++) g.lineTo(ground[i][0], ground[i][1]);
+      g.closePath(); g.fill();
+    }
+  }
+
+  /* 지평선과 고각 눈금 — 실제 투영을 쓰므로 자세에 따라 기울고 휜다 */
+  function horizon(g, head) {
+    var LAD = [-30, -20, -10, 0, 10, 20, 30, 45, 60, 75];
+    g.lineWidth = 1;
+    for (var i = 0; i < LAD.length; i++) {
+      var el = LAD[i], zero = el === 0;
+      var span = zero ? 70 : 22, stepDeg = zero ? 5 : 11;
+      var pts = [], any = false;
+      for (var d = -span; d <= span + 0.001; d += stepDeg) {
+        var p = View.project(Geo.norm360(head + d), el);
+        pts.push(p);
+        if (p.front && p.x > -W && p.x < W * 2 && p.y > -H && p.y < H * 2) any = true;
+      }
+      if (!any) continue;
+      g.strokeStyle = zero ? 'rgba(95,227,161,.5)' : 'rgba(95,227,161,.19)';
+      g.lineWidth = zero ? 1.6 : 1;
+      g.beginPath();
+      var started = false;
+      for (var k = 0; k < pts.length; k++) {
+        if (!pts[k].front) { started = false; continue; }
+        if (!started) { g.moveTo(pts[k].x, pts[k].y); started = true; }
+        else g.lineTo(pts[k].x, pts[k].y);
+      }
+      g.stroke();
+      if (!zero) {
+        var lab = View.project(Geo.norm360(head), el);
+        if (lab.front && lab.x > -40 && lab.x < W + 40 && lab.y > 0 && lab.y < H) {
+          g.font = '10px ' + FONT;
+          g.fillStyle = 'rgba(95,227,161,.55)';
+          g.textAlign = 'left'; g.textBaseline = 'middle';
+          g.fillText((el > 0 ? '+' : '') + el + '°', lab.x + 8, lab.y);
+        }
+      }
+    }
+  }
+
+  /* 상단 방위 리본 */
+  function compass(g, head, absolute) {
+    var y = 62 + SAFE_T;                     // 상단 상태 칩 아래
+    var f = View.state.f, cxp = W / 2;
+    var half = Geo.deg(Math.atan((W / 2) / f));
+    g.save();
+    g.beginPath(); g.rect(0, y - 20, W, 34); g.clip();
+
+    g.strokeStyle = 'rgba(95,227,161,.20)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(0, y + 11); g.lineTo(W, y + 11); g.stroke();
+
+    var start = Math.ceil((head - half - 5) / 5) * 5;
+    for (var a = start; a <= head + half + 5; a += 5) {
+      var diff = Geo.norm180(a - head);
+      if (Math.abs(diff) > 88) continue;
+      var x = cxp + f * Math.tan(Geo.rad(diff));
+      if (x < -30 || x > W + 30) continue;
+      var az = Geo.norm360(a);
+      var major = az % 45 === 0, mid = az % 15 === 0;
+      g.strokeStyle = major ? 'rgba(95,227,161,.8)' : 'rgba(95,227,161,.34)';
+      g.lineWidth = major ? 1.6 : 1;
+      g.beginPath();
+      g.moveTo(x, y + 11); g.lineTo(x, y + 11 - (major ? 10 : mid ? 6 : 3.5));
+      g.stroke();
+      if (major) {
+        g.font = '600 11px ' + FONT;
+        g.fillStyle = absolute ? '#5FE3A1' : 'rgba(255,194,75,.9)';
+        g.textAlign = 'center'; g.textBaseline = 'bottom';
+        var nm = ['N', '045', 'E', '135', 'S', '225', 'W', '315'][az / 45];
+        g.fillText(nm, x, y + 0);
+      }
+    }
+    g.restore();
+
+    /* 현재 방위 판 */
+    var txt = Geo.fmtAz(head);
+    g.font = '700 13px ' + FONT;
+    var tw = g.measureText(txt).width + 16;
+    g.fillStyle = absolute ? 'rgba(95,227,161,.92)' : 'rgba(255,194,75,.92)';
+    roundRect(g, cxp - tw / 2, y + 12, tw, 20, 5); g.fill();
+    g.fillStyle = '#04120C';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(txt, cxp, y + 22.5);
+
+    /* 중앙 조준선 */
+    g.strokeStyle = 'rgba(95,227,161,.45)'; g.lineWidth = 1.4;
+    g.beginPath();
+    g.moveTo(cxp - 13, H / 2); g.lineTo(cxp - 5, H / 2);
+    g.moveTo(cxp + 5, H / 2); g.lineTo(cxp + 13, H / 2);
+    g.moveTo(cxp, H / 2 - 13); g.lineTo(cxp, H / 2 - 5);
+    g.moveTo(cxp, H / 2 + 5); g.lineTo(cxp, H / 2 + 13);
+    g.stroke();
+  }
+
+  /* 라벨 겹침 회피 — 가까운 것부터 자리를 잡고 늦게 온 것을 아래로 민다 */
+  function place(boxes, x, y, w, h) {
+    var cand = [[x, y], [x - w - 26, y], [x, y - h - 10], [x - w - 26, y - h - 10],
+                [x, y + h + 10], [x - w - 26, y + h + 10]];
+    /* 가까운 자리를 먼저 다 훑고 나서 아래로 민다.
+       후보별로 끝까지 밀어 보면 지시선이 화면을 가로지를 만큼 길어진다. */
+    for (var push = 0; push < 4; push++) {
+      for (var c = 0; c < cand.length; c++) {
+        var bx = cand[c][0], by = cand[c][1] + push * (h + 5);
+        if (bx < 4 || bx + w > W - 4 || by < 4 || by + h > H - 4) continue;
+        var clash = false;
+        for (var i = 0; i < boxes.length; i++) {
+          var b = boxes[i];
+          if (bx < b[0] + b[2] + 4 && bx + w + 4 > b[0] && by < b[1] + b[3] + 3 && by + h + 3 > b[1]) { clash = true; break; }
+        }
+        if (!clash) return [bx, by];
+      }
+    }
+    return null;
+  }
+
+  function label(a, metric) {
+    var l1 = a.cs || a.reg || a.id.toUpperCase();
+    var t = a.type ? a.type.toUpperCase() : null;
+    var l2 = (t ? t + ' · ' : '') + Geo.fmtAlt(a.altFt, metric);
+    var vs = a.vsFpm > 200 ? ' ▲' : a.vsFpm < -200 ? ' ▼' : '';
+    var l3 = Geo.fmtDist(a.slantM, metric) + vs;
+    return [l1, l2, l3];
+  }
+
+  /* ── 메인 프레임 ──────────────────────────────────────────── */
+
+  function frame(list, opt) {
+    if (!cx) return;
+    cx.clearRect(0, 0, W, H);
+    hit = [];
+    var o = Orient.state;
+    var metric = opt.metric, sel = opt.selected, absolute = o.absolute && !Orient.stale();
+
+    if (opt.synth) synth(cx);
+    horizon(cx, o.heading);
+    compass(cx, o.heading, absolute);
+
+    var boxes = reserved.slice(), labeled = 0, offs = [];
+    var maxLabels = W < 420 ? 8 : 14;
+
+    for (var i = 0; i < list.length; i++) {
+      var a = list[i];
+      if (a.slantM > Geo.nmToM(opt.maxNm)) continue;
+      if (a.altFt != null && a.altFt < opt.minAltFt) continue;
+      var p = View.project(a.az, a.el);
+      a._sx = p.x; a._sy = p.y; a._front = p.front;
+
+      if (!View.onScreen(p, 30)) {
+        if (offs.length < 6) offs.push(a);
+        continue;
+      }
+
+      var isSel = sel === a.id;
+      var col = altColor(a.altFt);
+      /* 가까울수록 크게 — 2km 에서 18px, 90km 에서 6px */
+      var s = 18 - 12 * Math.min(1, Math.max(0, (a.slantM - 2000) / 88000));
+      var alpha = 0.45 + 0.55 * Math.min(1, Math.max(0, 1 - (a.slantM - 15000) / 130000));
+      if (isSel) alpha = 1;
+
+      cx.save();
+      cx.globalAlpha = alpha;
+      cx.translate(p.x, p.y);
+      cx.rotate(Geo.rad(a.relTrack != null ? a.relTrack : 0));
+      planeGlyph(cx, s * 0.5);
+      cx.fillStyle = col;
+      cx.fill();
+      cx.lineWidth = 1;
+      cx.strokeStyle = 'rgba(2,8,6,.75)';
+      cx.stroke();
+      cx.restore();
+
+      if (isSel) {
+        cx.save();
+        cx.globalAlpha = 0.9; cx.strokeStyle = '#6FD8FF'; cx.lineWidth = 1.6;
+        cx.beginPath(); cx.arc(p.x, p.y, s * 1.15 + 8, 0, 6.2832); cx.stroke();
+        cx.setLineDash([3, 4]);
+        cx.beginPath(); cx.arc(p.x, p.y, s * 1.15 + 15, 0, 6.2832); cx.stroke();
+        cx.restore();
+      }
+
+      hit.push({ id: a.id, x: p.x, y: p.y, r: Math.max(24, s * 1.4) });
+
+      /* 라벨 */
+      if (labeled >= maxLabels && !isSel) continue;
+      var L = label(a, metric);
+      cx.font = '600 12px ' + FONT;
+      var w = 0, j;
+      for (j = 0; j < L.length; j++) {
+        cx.font = (j === 0 ? '600 12.5px ' : '11px ') + FONT;
+        w = Math.max(w, cx.measureText(L[j]).width);
+      }
+      w += 14;
+      var h = 46;
+      var pos = place(boxes, p.x + s + 12, p.y - h / 2, w, h);
+      if (!pos) continue;
+      boxes.push([pos[0], pos[1], w, h]);
+      labeled++;
+
+      cx.save();
+      cx.globalAlpha = Math.max(0.75, alpha);
+      /* 지시선 */
+      cx.strokeStyle = isSel ? 'rgba(111,216,255,.75)' : 'rgba(95,227,161,.45)';
+      cx.lineWidth = 1;
+      cx.beginPath();
+      cx.moveTo(p.x, p.y);
+      cx.lineTo(pos[0] < p.x ? pos[0] + w : pos[0], pos[1] + h / 2);
+      cx.stroke();
+
+      cx.fillStyle = 'rgba(6,12,10,.72)';
+      cx.strokeStyle = isSel ? 'rgba(111,216,255,.65)' : 'rgba(95,227,161,.28)';
+      roundRect(cx, pos[0], pos[1], w, h, 6);
+      cx.fill(); cx.stroke();
+
+      cx.textAlign = 'left'; cx.textBaseline = 'middle';
+      cx.font = '600 12.5px ' + FONT;
+      cx.fillStyle = isSel ? '#BFEEFF' : '#EAF4EF';
+      cx.fillText(L[0], pos[0] + 7, pos[1] + 12);
+      cx.font = '11px ' + FONT;
+      cx.fillStyle = col;
+      cx.fillText(L[1], pos[0] + 7, pos[1] + 26);
+      cx.fillStyle = 'rgba(159,182,172,.95)';
+      cx.fillText(L[2], pos[0] + 7, pos[1] + 38);
+      cx.restore();
+    }
+
+    offscreen(cx, offs, sel, metric, boxes);
+    scope(list, opt);
+  }
+
+  /* 시야 밖 항공기를 가장자리 화살표로 알려 준다 */
+  function offscreen(g, list, sel, metric, boxes) {
+    var cxp = W / 2, cyp = H / 2, pad = 34, padR = 62;   // 오른쪽은 세로 툴바만큼 더 띄운다
+    for (var i = 0; i < list.length; i++) {
+      var a = list[i];
+      var dx = a._sx - cxp, dy = a._sy - cyp;
+      if (!a._front) { dx = -dx; dy = -dy; }
+      var m = Math.sqrt(dx * dx + dy * dy) || 1;
+      dx /= m; dy /= m;
+      var rx = (W / 2 - (dx > 0 ? padR : pad)) / Math.abs(dx || 1e-6);
+      var ry = (H / 2 - pad) / Math.abs(dy || 1e-6);
+      var r = Math.min(rx, ry);
+      var x = cxp + dx * r, y = cyp + dy * r;
+      var isSel = sel === a.id;
+
+      /* 이미 놓인 라벨이나 UI 와 겹치면 건너뛴다 — 겹쳐 찍히면 둘 다 못 읽는다 */
+      var txt = (a.cs || a.reg || a.id.toUpperCase()) + '  ' + Geo.fmtDist(a.slantM, metric);
+      g.font = '10px ' + FONT;
+      var tw = g.measureText(txt).width;
+      var align = (x > W - 110) ? 'right' : (x < 90 ? 'left' : 'center');
+      var base = (y < H / 2) ? 'top' : 'bottom';
+      var ox = align === 'right' ? -12 : align === 'left' ? 12 : 0;
+      var oy = base === 'top' ? 12 : -12;
+      var bx = x + ox - (align === 'right' ? tw : align === 'left' ? 0 : tw / 2) - 3;
+      var by = y + oy - (base === 'top' ? 0 : 13) - 2;
+      var bw = tw + 6, bh = 17;
+      var clash = false;
+      for (var b = 0; b < boxes.length; b++) {
+        var q = boxes[b];
+        if (bx < q[0] + q[2] && bx + bw > q[0] && by < q[1] + q[3] && by + bh > q[1]) { clash = true; break; }
+      }
+      if (clash && !isSel) continue;
+      boxes.push([bx, by, bw, bh]);
+
+      g.save();
+      g.globalAlpha = isSel ? 1 : 0.62;
+      g.translate(x, y);
+      g.rotate(Math.atan2(dy, dx) + Math.PI / 2);
+      g.beginPath();
+      g.moveTo(0, -9); g.lineTo(7, 6); g.lineTo(0, 2.5); g.lineTo(-7, 6);
+      g.closePath();
+      g.fillStyle = isSel ? '#6FD8FF' : altColor(a.altFt);
+      g.fill();
+      g.restore();
+
+      g.save();
+      g.globalAlpha = isSel ? 1 : 0.62;
+      g.font = '10px ' + FONT;
+      g.textAlign = align; g.textBaseline = base;
+      g.fillStyle = 'rgba(4,10,8,.6)';
+      g.fillRect(bx, by, bw, bh);
+      g.fillStyle = isSel ? '#BFEEFF' : 'rgba(234,244,239,.92)';
+      g.fillText(txt, x + ox, y + oy);
+      g.restore();
+    }
+  }
+
+  /* ── 레이더 스코프 ────────────────────────────────────────── */
+
+  function scope(list, opt) {
+    if (!sx || !SW) return;
+    scopeHit = [];
+    var R = Math.min(SW, SH) / 2 - 4, cxp = SW / 2, cyp = SH / 2;
+    var rangeM = Geo.nmToM(opt.scopeNm);
+    var up = opt.headingUp ? Orient.state.heading : 0;   // 화면 위쪽이 가리키는 방위
+
+    sx.clearRect(0, 0, SW, SH);
+
+    /* 배경 */
+    sx.fillStyle = 'rgba(4,10,8,.55)';
+    sx.beginPath(); sx.arc(cxp, cyp, R + 4, 0, 6.2832); sx.fill();
+
+    /* 카메라 시야 부채꼴 */
+    var halfFov = Geo.deg(Math.atan((View.state.w / 2) / View.state.f));
+    var camRel = Geo.rad(Geo.norm360(Orient.state.heading - up) - 90);
+    sx.save();
+    sx.fillStyle = 'rgba(95,227,161,.13)';
+    sx.beginPath();
+    sx.moveTo(cxp, cyp);
+    sx.arc(cxp, cyp, R, camRel - Geo.rad(halfFov), camRel + Geo.rad(halfFov));
+    sx.closePath(); sx.fill();
+    sx.restore();
+
+    /* 거리 링 */
+    sx.strokeStyle = 'rgba(95,227,161,.26)'; sx.lineWidth = 1;
+    for (var k = 1; k <= 3; k++) {
+      sx.beginPath(); sx.arc(cxp, cyp, R * k / 3, 0, 6.2832); sx.stroke();
+    }
+    sx.strokeStyle = 'rgba(95,227,161,.16)';
+    sx.beginPath();
+    sx.moveTo(cxp - R, cyp); sx.lineTo(cxp + R, cyp);
+    sx.moveTo(cxp, cyp - R); sx.lineTo(cxp, cyp + R);
+    sx.stroke();
+
+    /* 방위 글자 */
+    sx.font = '600 9px ' + FONT;
+    sx.textAlign = 'center'; sx.textBaseline = 'middle';
+    var marks = [['N', 0], ['E', 90], ['S', 180], ['W', 270]];
+    for (var mi = 0; mi < marks.length; mi++) {
+      var ang = Geo.rad(Geo.norm360(marks[mi][1] - up) - 90);
+      var mx = cxp + Math.cos(ang) * (R - 8), my = cyp + Math.sin(ang) * (R - 8);
+      sx.fillStyle = marks[mi][0] === 'N' ? '#5FE3A1' : 'rgba(159,182,172,.75)';
+      sx.fillText(marks[mi][0], mx, my);
+    }
+
+    /* 범위 표시 */
+    sx.font = '9px ' + FONT;
+    sx.textAlign = 'left'; sx.textBaseline = 'top';
+    sx.fillStyle = 'rgba(159,182,172,.7)';
+    sx.fillText(Geo.fmtDist(rangeM, opt.metric), 7, SH - 15);
+
+    /* 항공기 */
+    for (var i = list.length - 1; i >= 0; i--) {
+      var a = list[i];
+      if (a.distM > rangeM) continue;
+      if (a.altFt != null && a.altFt < opt.minAltFt) continue;
+      var rr = (a.distM / rangeM) * R;
+      var th = Geo.rad(Geo.norm360(a.az - up) - 90);
+      var x = cxp + Math.cos(th) * rr, y = cyp + Math.sin(th) * rr;
+      var isSel = opt.selected === a.id;
+
+      /* 기수 방향 꼬리 */
+      if (a.track != null) {
+        var tt = Geo.rad(Geo.norm360(a.track - up) - 90);
+        sx.strokeStyle = isSel ? '#6FD8FF' : 'rgba(95,227,161,.5)';
+        sx.lineWidth = 1;
+        sx.beginPath(); sx.moveTo(x, y);
+        sx.lineTo(x + Math.cos(tt) * 7, y + Math.sin(tt) * 7); sx.stroke();
+      }
+      sx.fillStyle = isSel ? '#6FD8FF' : altColor(a.altFt);
+      sx.beginPath(); sx.arc(x, y, isSel ? 3.6 : 2.4, 0, 6.2832); sx.fill();
+      if (isSel) {
+        sx.strokeStyle = '#6FD8FF'; sx.lineWidth = 1;
+        sx.beginPath(); sx.arc(x, y, 7, 0, 6.2832); sx.stroke();
+      }
+      scopeHit.push({ id: a.id, x: x, y: y });
+    }
+
+    /* 관측자 */
+    sx.fillStyle = '#EAF4EF';
+    sx.beginPath(); sx.arc(cxp, cyp, 2.2, 0, 6.2832); sx.fill();
+    sx.strokeStyle = 'rgba(234,244,239,.35)'; sx.lineWidth = 1;
+    sx.beginPath(); sx.arc(cxp, cyp, 5.5, 0, 6.2832); sx.stroke();
+  }
+
+  /* ── 히트 테스트 ──────────────────────────────────────────── */
+  function pick(x, y) {
+    var best = null, bd = 1e9;
+    for (var i = 0; i < hit.length; i++) {
+      var h = hit[i], d = Math.hypot(h.x - x, h.y - y);
+      if (d < h.r && d < bd) { bd = d; best = h.id; }
+    }
+    return best;
+  }
+  function pickScope(x, y) {
+    var best = null, bd = 1e9;
+    for (var i = 0; i < scopeHit.length; i++) {
+      var h = scopeHit[i], d = Math.hypot(h.x - x, h.y - y);
+      if (d < 14 && d < bd) { bd = d; best = h.id; }
+    }
+    return best;
+  }
+
+  return { init: init, resize: resize, frame: frame, pick: pick, pickScope: pickScope,
+           altColor: altColor, planeGlyph: planeGlyph,
+           get size() { return { w: W, h: H }; } };
+})();
+
+/* ── 60-ui.js — 시트(목록·상세·설정)와 상태 표시 ────────────────── */
+'use strict';
+
+var UI = (function () {
+  var $ = function (s) { return document.querySelector(s); };
+  var el = {};
+  var view = null;                 // 'list' | 'detail' | 'settings' | null
+  var sortBy = 'dist';             // 'dist' | 'alt'
+  var lastPaint = 0;
+
+  function init() {
+    el.stage = $('#stage'); el.sheet = $('#sheet'); el.body = $('#sheetBody');
+    el.title = $('#sheetTitle'); el.tools = $('#sheetTools'); el.stat = $('#stat');
+    el.toast = $('#toast');
+  }
+
+  /* ── 토스트 ───────────────────────────────────────────────── */
+  var toastSeen = Object.create(null);
+  function toast(msg, kind, once) {
+    if (once) {
+      if (toastSeen[msg]) return;
+      toastSeen[msg] = 1;
+    }
+    var d = document.createElement('div');
+    d.className = 'tst' + (kind ? ' ' + kind : '');
+    d.textContent = msg;
+    el.toast.appendChild(d);
+    setTimeout(function () {
+      d.style.transition = 'opacity .3s'; d.style.opacity = '0';
+      setTimeout(function () { d.remove(); }, 320);
+    }, kind === 'bad' ? 5200 : 3400);
+  }
+
+  /* ── 상단 상태 칩 ─────────────────────────────────────────── */
+  var statKey = '';
+  function status(app) {
+    var p = Position.state, o = Orient.state, s = Source.state;
+    var chips = [];
+
+    if (!p.ok) chips.push(['bad', '위치 없음']);
+    else if (p.manual) chips.push(['warn', '위치 수동']);
+    else chips.push(['', '±' + (p.acc != null ? Math.round(p.acc) : '?') + ' m']);
+
+    if (Orient.stale()) chips.push(['bad', '방향 센서 없음']);
+    else if (!o.absolute) chips.push(['warn', '방위 미보정']);
+
+    var age = s.lastOk ? (Date.now() - s.lastOk) / 1000 : null;
+    if (s.demo) chips.push(['warn', '데모']);
+    else if (!s.live || age == null) chips.push(['bad', s.lastErr || '수신 대기']);
+    else if (age > 25) chips.push(['warn', s.providerName + ' · ' + Geo.fmtAge(age)]);
+    else chips.push(['live', s.providerName]);
+
+    chips.push(['mute', app.visible + '대 / ' + s.count]);
+
+    var key = JSON.stringify(chips);
+    if (key === statKey) return;
+    statKey = key;
+    el.stat.innerHTML = chips.map(function (c) {
+      if (c[0] === 'live') return '<span class="chip"><i class="dot live"></i>' + esc(c[1]) + '</span>';
+      return '<span class="chip' + (c[0] ? ' ' + c[0] : '') + '">' + esc(c[1]) + '</span>';
+    }).join('');
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  /* ── 시트 열고 닫기 ───────────────────────────────────────── */
+  function open(v) {
+    view = v;
+    el.sheet.classList.add('open');
+    el.stage.classList.add('sheet');
+    lastPaint = 0;
+    paint(App.state, true);
+  }
+  function close() {
+    view = null;
+    el.sheet.classList.remove('open');
+    el.stage.classList.remove('sheet');
+    /* 숨어 있던 스코프가 다시 나오므로 캔버스 크기를 잡아 준다 */
+    if (typeof Render !== 'undefined') Render.resize();
+  }
+  function toggle(v) { if (view === v) close(); else open(v); }
+  function current() { return view; }
+
+  /* ── 그리기 ───────────────────────────────────────────────── */
+  function paint(app, force) {
+    if (!view) return;
+    var now = performance.now();
+    if (!force && now - lastPaint < 220) return;      // 목록·상세는 초당 4~5회면 충분하다
+    lastPaint = now;
+    if (view === 'list') paintList(app);
+    else if (view === 'detail') paintDetail(app);
+    else if (view === 'settings' && force) paintSettings(app);
+  }
+
+  /* ── 목록 ─────────────────────────────────────────────────── */
+  function paintList(app) {
+    el.title.textContent = '주변 항공기';
+    el.tools.innerHTML =
+      '<div class="seg" id="sortSeg">' +
+      '<button data-k="dist"' + (sortBy === 'dist' ? ' class="on"' : '') + '>가까운 순</button>' +
+      '<button data-k="alt"' + (sortBy === 'alt' ? ' class="on"' : '') + '>낮은 순</button></div>';
+    el.tools.querySelector('#sortSeg').onclick = function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      sortBy = b.dataset.k; paint(app, true);
+    };
+
+    var list = app.list.slice();
+    if (sortBy === 'alt') list.sort(function (a, b) { return (a.altFt || 0) - (b.altFt || 0); });
+
+    if (!list.length) {
+      el.body.innerHTML = '<div class="empty">' +
+        (Position.state.ok
+          ? '조회 반경 안에 항공기가 없습니다.<br>설정에서 반경을 넓히거나 고도 필터를 확인해 보세요.'
+          : '위치를 먼저 확인해야 주변 항공기를 찾을 수 있습니다.') + '</div>';
+      return;
+    }
+
+    var m = app.metric, html = '';
+    for (var i = 0; i < list.length; i++) {
+      var a = list[i];
+      var f = Catalog.flight(a.cs);
+      var tn = Catalog.typeName(a.type);
+      var sub = [f ? f.airline + ' ' + f.number : null, tn, a.reg].filter(Boolean).join(' · ');
+      html +=
+        '<div class="row' + (app.selected === a.id ? ' sel' : '') + '" data-id="' + esc(a.id) + '">' +
+          '<div class="glyph" style="color:' + Render.altColor(a.altFt) + '">' + glyphSvg(a.relTrack) + '</div>' +
+          '<div style="min-width:0">' +
+            '<div class="cs">' + esc(a.cs || a.reg || a.id.toUpperCase()) + '</div>' +
+            '<div class="sub">' + esc(sub || '정보 없음') + '</div>' +
+          '</div>' +
+          '<div class="rt"><b>' + esc(Geo.fmtDist(a.slantM, m)) + '</b>' +
+            esc(Geo.fmtAlt(a.altFt, m)) + '<br>' +
+            esc(Geo.fmtAz(a.az) + ' ' + Geo.compass(a.az)) + '</div>' +
+        '</div>';
+    }
+    el.body.innerHTML = html;
+    el.body.onclick = function (e) {
+      var r = e.target.closest('.row'); if (!r) return;
+      App.select(r.dataset.id);
+      open('detail');
+    };
+  }
+
+  function glyphSvg(rel) {
+    var r = rel != null ? rel : 0;
+    return '<svg width="20" height="20" viewBox="-12 -12 24 24" style="transform:rotate(' + r.toFixed(0) + 'deg)">' +
+      '<path fill="currentColor" d="M0-10 1.8-3 10 1.4 10 3.6 1.6 2.2 1.4 6.2 4.2 8.6 4.2 9.8 0 8.2 -4.2 9.8 -4.2 8.6 -1.4 6.2 -1.6 2.2 -10 3.6 -10 1.4 -1.8-3Z"/></svg>';
+  }
+
+  /* ── 상세 ─────────────────────────────────────────────────── */
+  function paintDetail(app) {
+    var a = app.byId(app.selected);
+    if (!a) {
+      el.title.textContent = '항공기';
+      el.tools.innerHTML = '';
+      el.body.innerHTML = '<div class="empty">선택한 항공기가 수신 범위를 벗어났습니다.</div>';
+      return;
+    }
+    var m = app.metric;
+    var f = Catalog.flight(a.cs);
+    var tn = Catalog.typeName(a.type);
+    var country = a.country || Catalog.country(a.reg, a.id);
+    var sq = Catalog.squawk(a.squawk);
+    var fl = Geo.flightLevel(a.altFt);
+
+    el.title.textContent = '항공기 상세';
+    el.tools.innerHTML = '<button class="btn" id="bBack">목록</button>';
+    el.tools.querySelector('#bBack').onclick = function () { open('list'); };
+
+    /* 어디를 봐야 하는지 — 지금 보는 방향과의 차이 */
+    var o = Orient.state;
+    var dAz = Geo.norm180(a.az - o.heading);
+    var dEl = a.el - o.pitch;
+    var guide;
+    if (Math.abs(dAz) < 6 && Math.abs(dEl) < 6) guide = '화면 한가운데에 있습니다';
+    else {
+      var g = [];
+      if (Math.abs(dAz) >= 6) g.push((dAz > 0 ? '오른쪽으로 ' : '왼쪽으로 ') + Math.round(Math.abs(dAz)) + '°');
+      if (Math.abs(dEl) >= 6) g.push((dEl > 0 ? '위로 ' : '아래로 ') + Math.round(Math.abs(dEl)) + '°');
+      guide = g.join(', ');
+    }
+
+    var cells = [
+      ['고도', Geo.fmtAlt(a.altFt, m) + (fl ? '<small>' + fl + '</small>' : '')],
+      ['거리', Geo.fmtDist(a.slantM, m)],
+      ['방위', Geo.fmtAz(a.az) + '<small>' + Geo.compass(a.az) + '</small>'],
+      ['고각', a.el.toFixed(1) + '°'],
+      ['속도', Geo.fmtSpd(a.gs, m)],
+      ['기수', a.track != null ? Geo.fmtAz(a.track) : '—'],
+      ['상승·하강', Geo.fmtVs(a.vsFpm, m)],
+      ['지표 거리', Geo.fmtDist(a.distM, m)],
+      ['스쿼크', a.squawk || '—'],
+      ['수신 지연', Geo.fmtAge(a.age)]
+    ];
+
+    var meta = [f ? f.airline + ' ' + f.number + '편' : null, tn, a.reg, country]
+      .filter(Boolean).join(' · ');
+
+    el.body.innerHTML =
+      '<div class="dhead">' +
+        '<div class="glyph" style="color:' + Render.altColor(a.altFt) + ';width:34px;height:34px">' +
+          glyphSvg(a.relTrack) + '</div>' +
+        '<div style="min-width:0"><div class="cs">' + esc(a.cs || a.reg || a.id.toUpperCase()) + '</div>' +
+        '<div class="meta">' + esc(meta || 'ICAO ' + a.id.toUpperCase()) + '</div></div>' +
+      '</div>' +
+      (sq ? '<div style="margin-top:10px" class="chip bad">' + esc(sq.t) + '</div>' : '') +
+      (a.emg ? '<div style="margin-top:10px" class="chip bad">비상 신호: ' + esc(a.emg) + '</div>' : '') +
+      '<div style="margin-top:11px;padding:9px 11px;border-radius:8px;background:rgba(111,216,255,.10);' +
+        'border:1px solid rgba(111,216,255,.28);font-size:12.5px;color:#BFEEFF">⌖ ' + esc(guide) + '</div>' +
+      '<div class="dgrid">' + cells.map(function (c) {
+        return '<div class="cell"><k>' + esc(c[0]) + '</k><v>' + c[1] + '</v></div>';
+      }).join('') + '</div>' +
+      '<div style="margin-top:12px;font-size:11px;color:var(--ink-3);line-height:1.6">' +
+        'ICAO 24bit ' + esc(a.id.toUpperCase()) +
+        (a.cat ? ' · ' + esc(Catalog.category(a.cat) || a.cat) : '') +
+        ' · 출처 ' + esc(Source.state.providerName) +
+      '</div>';
+  }
+
+  /* ── 설정 ─────────────────────────────────────────────────── */
+  function paintSettings(app) {
+    el.title.textContent = '설정';
+    el.tools.innerHTML = '';
+    var c = app.cfg;
+
+    function row(lab, hint, ctl, cls) {
+      return '<div class="fld' + (cls ? ' ' + cls : '') + '"><div class="lab"><b>' + lab + '</b>' +
+        (hint ? '<i>' + hint + '</i>' : '') + '</div><div class="ctl">' + ctl + '</div></div>';
+    }
+    function slider(id, min, max, step, val, unit) {
+      return '<input type="range" id="' + id + '" min="' + min + '" max="' + max +
+        '" step="' + step + '" value="' + val + '"><span class="val" id="' + id + 'V">' +
+        val + (unit || '') + '</span>';
+    }
+    function sw(id, on) {
+      return '<label class="sw"><input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '><i></i></label>';
+    }
+
+    el.body.innerHTML =
+      '<div class="sechead">보기</div>' +
+      row('단위', '거리·고도·속도 표기', '<div class="seg" id="unitSeg">' +
+        '<button data-v="1"' + (c.metric ? ' class="on"' : '') + '>미터법</button>' +
+        '<button data-v="0"' + (!c.metric ? ' class="on"' : '') + '>항공 단위</button></div>') +
+      row('카메라', '끄면 인공 지평선 위에 그립니다', sw('setCam', c.camera)) +
+      row('레이더 기준', '스코프 위쪽을 무엇에 맞출지', '<div class="seg" id="upSeg">' +
+        '<button data-v="0"' + (!c.headingUp ? ' class="on"' : '') + '>노스업</button>' +
+        '<button data-v="1"' + (c.headingUp ? ' class="on"' : '') + '>헤딩업</button></div>') +
+      row('접근 알림음', '10 km 안으로 새 항공기가 들어오면 울립니다', sw('setChime', c.chime)) +
+
+      '<div class="sechead">보정</div>' +
+      row('카메라 화각', '화면 속 항공기가 실제보다 안쪽/바깥쪽에 있으면 조절하세요',
+        slider('setFov', 25, 120, 1, Math.round(c.fov), '°'), 'col') +
+      row('방위 보정', '나침반이 틀어져 있을 때 좌우로 밉니다',
+        slider('setOff', -45, 45, 1, Math.round(c.headingOffset), '°'), 'col') +
+
+      '<div class="sechead">표시 범위</div>' +
+      row('표시 거리', '이보다 먼 항공기는 화면에 그리지 않습니다',
+        slider('setMax', 10, 250, 5, Math.round(c.maxNm), ' NM'), 'col') +
+      row('최저 고도', '지상 차량과 저고도 잡음을 걸러 냅니다',
+        slider('setMinAlt', 0, 20000, 500, Math.round(c.minAltFt), ' ft'), 'col') +
+      row('스코프 범위', '레이더 바깥 링까지의 거리',
+        slider('setScope', 5, 250, 5, Math.round(c.scopeNm), ' NM'), 'col') +
+
+      '<div class="sechead">데이터</div>' +
+      row('조회 반경', '서버에 요청하는 범위. 넓을수록 응답이 커집니다',
+        slider('setRadius', 20, 250, 10, Math.round(c.radiusNm), ' NM'), 'col') +
+      row('갱신 주기', '', slider('setIval', 3, 30, 1, Math.round(c.intervalMs / 1000), ' 초'), 'col') +
+      row('공급자', '현재 ' + esc(Source.state.providerName) + ' 사용 중',
+        '<select id="setProv" style="height:32px;background:var(--panel-2);border:1px solid var(--line);' +
+        'border-radius:7px;padding:0 8px">' +
+        Source.PROVIDERS.map(function (p, i) {
+          return '<option value="' + i + '"' + (i === Source.state.provider ? ' selected' : '') + '>' + esc(p.name) + '</option>';
+        }).join('') + '</select>') +
+      row('데모 모드', '실제 수신 대신 가상의 항공기를 띄웁니다', sw('setDemo', c.demo)) +
+
+      '<div style="margin-top:16px;font-size:11px;color:var(--ink-3);line-height:1.65">' +
+      '위치와 카메라 영상은 이 기기 밖으로 나가지 않습니다. 서버에는 조회할 좌표 범위만 보냅니다. ' +
+      '항공기 위치는 공개 ADS-B 수신망에서 오며 수 초의 지연과 누락이 있습니다. 항행이나 관제 목적으로 쓸 수 없습니다.</div>';
+
+    bindSettings(app);
+  }
+
+  function bindSettings(app) {
+    var c = app.cfg;
+    function seg(id, fn) {
+      var n = document.getElementById(id); if (!n) return;
+      n.onclick = function (e) {
+        var b = e.target.closest('button'); if (!b) return;
+        [].forEach.call(n.children, function (x) { x.classList.remove('on'); });
+        b.classList.add('on');
+        fn(b.dataset.v === '1');
+      };
+    }
+    function rng(id, unit, fn) {
+      var n = document.getElementById(id), v = document.getElementById(id + 'V');
+      if (!n) return;
+      n.oninput = function () { v.textContent = n.value + unit; fn(parseFloat(n.value)); };
+    }
+    function chk(id, fn) {
+      var n = document.getElementById(id); if (!n) return;
+      n.onchange = function () { fn(n.checked); };
+    }
+
+    seg('unitSeg', function (v) { c.metric = v; App.save(); });
+    seg('upSeg', function (v) { c.headingUp = v; App.save(); });
+    chk('setCam', function (v) { App.setCamera(v); });
+    chk('setChime', function (v) { c.chime = v; App.save(); });
+    chk('setDemo', function (v) { c.demo = v; Source.setDemo(v); App.save(); toast(v ? '데모 항공기를 띄웁니다' : '실제 수신으로 돌아갑니다'); });
+    rng('setFov', '°', function (v) { c.fov = v; View.setFov(v); App.save(); });
+    rng('setOff', '°', function (v) { c.headingOffset = v; Orient.setOffset(v); App.save(); });
+    rng('setMax', ' NM', function (v) { c.maxNm = v; App.save(); });
+    rng('setMinAlt', ' ft', function (v) { c.minAltFt = v; App.save(); });
+    rng('setScope', ' NM', function (v) { c.scopeNm = v; App.save(); });
+    rng('setRadius', ' NM', function (v) { c.radiusNm = v; Source.setRadius(v); App.save(); });
+    rng('setIval', ' 초', function (v) { c.intervalMs = v * 1000; Source.setInterval(v * 1000); App.save(); });
+    var p = document.getElementById('setProv');
+    if (p) p.onchange = function () { Source.setProvider(parseInt(p.value, 10)); App.save(); };
+  }
+
+  return { init: init, toast: toast, status: status, open: open, close: close,
+           toggle: toggle, current: current, paint: paint, esc: esc };
+})();
+
+/* ── 80-app.js — 상태, 입력, 메인 루프 ─────────────────────────── */
+'use strict';
+
+var App = (function () {
+  var KEY = 'fly.cfg.v1';
+
+  var cfg = {
+    metric: true,
+    camera: true,
+    headingUp: false,
+    chime: false,
+    demo: false,
+    fov: 67, fovAuto: true,
+    headingOffset: 0,
+    maxNm: 120,
+    minAltFt: 0,
+    scopeNm: 40,
+    radiusNm: 120,
+    intervalMs: 6000
+  };
+
+  var state = {
+    cfg: cfg,
+    list: [],
+    visible: 0,
+    selected: null,
+    started: false,
+    get metric() { return cfg.metric; },
+    byId: function (id) { return id ? (Source.fleet[id] || null) : null; }
+  };
+
+  var dom = {}, raf = null, tPrev = 0;
+
+  /* ── 설정 저장 ────────────────────────────────────────────── */
+  function load() {
+    try {
+      var s = JSON.parse(localStorage.getItem(KEY) || '{}');
+      for (var k in cfg) if (s[k] !== undefined && typeof s[k] === typeof cfg[k]) cfg[k] = s[k];
+    } catch (e) { /* 저장소를 못 쓰면 기본값으로 간다 */ }
+  }
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {}
+  }
+
+  /* ── 알림음 ───────────────────────────────────────────────── */
+  var actx = null, nearSet = Object.create(null);
+  function beep() {
+    try {
+      if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === 'suspended') actx.resume();
+      var o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
+      o.type = 'sine'; o.frequency.setValueAtTime(880, t);
+      o.frequency.exponentialRampToValueAtTime(1320, t + 0.09);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.16, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
+      o.connect(g); g.connect(actx.destination);
+      o.start(t); o.stop(t + 0.36);
+    } catch (e) {}
+  }
+  function chime(list) {
+    var lim = 10000, next = Object.create(null), fresh = false;
+    for (var i = 0; i < list.length; i++) {
+      var a = list[i];
+      if (a.slantM > lim) break;                 // 거리순 정렬이라 여기서 끊어도 된다
+      next[a.id] = 1;
+      if (!nearSet[a.id]) fresh = true;
+    }
+    nearSet = next;
+    if (fresh && cfg.chime && state.started) beep();
+  }
+
+  /* ── 시작 ─────────────────────────────────────────────────── */
+  function start(useCamera) {
+    if (state.started) return;
+    state.started = true;
+    document.getElementById('gate').classList.add('hide');
+
+    /* 세 요청 모두 이 제스처 안에서 곧바로 띄운다.
+       await 로 줄세우면 iOS 가 사용자 동작으로 인정하지 않는다. */
+    Orient.request().catch(function (e) {
+      UI.toast(e.message || '방향 센서를 쓸 수 없습니다 — 화면을 끌어 둘러보세요', 'warn');
+    });
+
+    if (useCamera && cfg.camera) {
+      Camera.start().then(function (s) {
+        dom.synth.classList.remove('on');
+        View.video(s.w, s.h);
+        if (cfg.fovAuto) { cfg.fov = Camera.guessFov(); View.setFov(cfg.fov); }
+      }).catch(function (e) {
+        cfg.camera = false;
+        dom.synth.classList.add('on');
+        UI.toast(e.message || '카메라를 열 수 없습니다', 'warn');
+        syncButtons();
+      });
+    }
+
+    Position.start().catch(function (e) {
+      UI.toast(e.message || '위치를 확인할 수 없습니다', 'bad');
+      if (!cfg.demo) UI.toast('설정에서 데모 모드를 켜면 화면을 확인할 수 있습니다', 'warn', true);
+    });
+
+    Source.setRadius(cfg.radiusNm);
+    Source.setInterval(cfg.intervalMs);
+    Source.start();
+  }
+
+  function setCamera(v) {
+    cfg.camera = v; save();
+    if (v) {
+      Camera.start().then(function (s) {
+        dom.synth.classList.remove('on');
+        View.video(s.w, s.h);
+        if (cfg.fovAuto) { cfg.fov = Camera.guessFov(); View.setFov(cfg.fov); }
+      }).catch(function (e) {
+        cfg.camera = false; dom.synth.classList.add('on');
+        UI.toast(e.message, 'warn'); syncButtons();
+      });
+    } else {
+      Camera.stop();
+      dom.synth.classList.add('on');
+      View.video(0, 0);
+      View.setFov(cfg.fov);
+    }
+    syncButtons();
+  }
+
+  function select(id) {
+    state.selected = id;
+    UI.paint(state, true);
+  }
+
+  /* ── 메인 루프 ────────────────────────────────────────────── */
+  function loop(ts) {
+    raf = requestAnimationFrame(loop);
+    var dt = tPrev ? Math.min(0.25, (ts - tPrev) / 1000) : 0.016;
+    tPrev = ts;
+
+    Orient.step(dt);
+    var list = Source.advance(Date.now(), dt);
+    state.list = list;
+
+    /* 화면 필터를 통과한 대수 */
+    var maxM = Geo.nmToM(cfg.maxNm), n = 0;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].slantM > maxM) break;
+      if (list[i].altFt != null && list[i].altFt < cfg.minAltFt) continue;
+      n++;
+    }
+    state.visible = n;
+
+    Render.frame(list, {
+      metric: cfg.metric, selected: state.selected,
+      maxNm: cfg.maxNm, minAltFt: cfg.minAltFt,
+      scopeNm: cfg.scopeNm, headingUp: cfg.headingUp,
+      synth: !Camera.state.on
+    });
+
+    UI.status(state);
+    UI.paint(state, false);
+    chime(list);
+  }
+
+  function pause() { if (raf) cancelAnimationFrame(raf); raf = null; tPrev = 0; }
+  function resume() { if (!raf) { tPrev = 0; raf = requestAnimationFrame(loop); } }
+
+  /* ── 입력 ─────────────────────────────────────────────────── */
+  function syncButtons() {
+    dom.bCam.classList.toggle('on', cfg.camera && Camera.state.on);
+    dom.bLock.classList.toggle('on', cfg.headingUp);
+    dom.bLock.textContent = cfg.headingUp ? 'H' : 'N';
+    dom.bLock.title = cfg.headingUp ? '레이더: 헤딩업' : '레이더: 노스업';
+  }
+
+  function bind() {
+    dom.synth = document.getElementById('synth');
+    dom.hud = document.getElementById('hud');
+    dom.scope = document.getElementById('scope');
+    dom.bCam = document.getElementById('bCam');
+    dom.bLock = document.getElementById('bLock');
+
+    document.getElementById('bStart').onclick = function () { start(true); };
+    document.getElementById('bDemo').onclick = function () {
+      cfg.demo = true; Source.setDemo(true); save();
+      start(false);
+      UI.toast('데모 항공기를 띄웁니다. 화면을 끌어 둘러보세요');
+    };
+    document.getElementById('bList').onclick = function () { UI.toggle('list'); };
+    document.getElementById('bSet').onclick = function () { UI.toggle('settings'); };
+    document.getElementById('bClose').onclick = function () { UI.close(); };
+    dom.bCam.onclick = function () { setCamera(!cfg.camera); };
+    dom.bLock.onclick = function () { cfg.headingUp = !cfg.headingUp; save(); syncButtons(); };
+
+    /* 스코프 탭 → 선택 */
+    dom.scope.onclick = function (e) {
+      var r = dom.scope.getBoundingClientRect();
+      var id = Render.pickScope(e.clientX - r.left, e.clientY - r.top);
+      if (id) { select(id); UI.open('detail'); }
+    };
+
+    /* HUD: 탭이면 선택, 끌면(센서 없을 때) 둘러보기 */
+    var down = null, moved = 0, look = null;
+    dom.hud.addEventListener('pointerdown', function (e) {
+      down = { x: e.clientX, y: e.clientY };
+      moved = 0;
+      look = Orient.usable() ? null : { h: Orient.state.mh, p: Orient.state.mp };
+      dom.hud.setPointerCapture(e.pointerId);
+    });
+    dom.hud.addEventListener('pointermove', function (e) {
+      if (!down) return;
+      var dx = e.clientX - down.x, dy = e.clientY - down.y;
+      moved = Math.max(moved, Math.hypot(dx, dy));
+      if (look) {
+        var perPx = View.vFov() / Math.max(1, Render.size.h);
+        Orient.setManual(look.h + dx * perPx * -1, look.p + dy * perPx);
+      }
+    });
+    dom.hud.addEventListener('pointerup', function (e) {
+      if (down && moved < 9) {
+        var r = dom.hud.getBoundingClientRect();
+        var id = Render.pick(e.clientX - r.left, e.clientY - r.top);
+        if (id) { select(id); UI.open('detail'); }
+        else if (UI.current()) UI.close();
+      }
+      down = null; look = null;
+    });
+    dom.hud.addEventListener('pointercancel', function () { down = null; look = null; });
+
+    /* 데스크톱: 휠로 화각 조절 */
+    dom.hud.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      cfg.fov = Math.max(25, Math.min(120, cfg.fov + (e.deltaY > 0 ? 2 : -2)));
+      cfg.fovAuto = false;
+      View.setFov(cfg.fov); save();
+      if (UI.current() === 'settings') UI.paint(state, true);
+    }, { passive: false });
+
+    /* 시트를 아래로 끌면 닫힘 */
+    var g = document.getElementById('grab'), gy = null;
+    g.addEventListener('pointerdown', function (e) { gy = e.clientY; g.setPointerCapture(e.pointerId); });
+    g.addEventListener('pointerup', function (e) {
+      if (gy != null && e.clientY - gy > 40) UI.close();
+      gy = null;
+    });
+
+    window.addEventListener('resize', function () { Render.resize(); });
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', function () { Render.resize(); });
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) pause(); else { resume(); Source.fetchOnce(); }
+    });
+
+    /* 데스크톱 키보드 */
+    window.addEventListener('keydown', function (e) {
+      if (e.target && /input|select|textarea/i.test(e.target.tagName)) return;
+      var step = e.shiftKey ? 15 : 5;
+      if (Orient.usable()) return;
+      if (e.key === 'ArrowLeft') Orient.setManual(Orient.state.mh - step, Orient.state.mp);
+      else if (e.key === 'ArrowRight') Orient.setManual(Orient.state.mh + step, Orient.state.mp);
+      else if (e.key === 'ArrowUp') Orient.setManual(Orient.state.mh, Orient.state.mp + step);
+      else if (e.key === 'ArrowDown') Orient.setManual(Orient.state.mh, Orient.state.mp - step);
+      else if (e.key === 'Escape') UI.close();
+      else return;
+      e.preventDefault();
+    });
+  }
+
+  function boot() {
+    load();
+    UI.init();
+    Camera.bind(document.getElementById('cam'));
+    Render.init(document.getElementById('hud'), document.querySelector('#scope canvas'));
+    Render.resize();
+    View.setFov(cfg.fov);
+    Orient.setOffset(cfg.headingOffset);
+    Orient.setManual(0, 12);             // 센서가 붙기 전까지의 기본 시선
+    Source.setRadius(cfg.radiusNm);
+    Source.setInterval(cfg.intervalMs);
+    if (cfg.demo) Source.state.demo = true;
+    bind();
+    syncButtons();
+
+    Position.on(function (p) {
+      if (p.ok && !Source.state.demo && !Source.state.lastOk) Source.fetchOnce();
+    });
+
+    resume();
+  }
+
+  return { state: state, cfg: cfg, boot: boot, start: start, select: select,
+           save: save, setCamera: setCamera, pause: pause, resume: resume };
+})();
+
+/* ── 99-boot.js — 시동 ─────────────────────────────────────────── */
+'use strict';
+(function () {
+  function go() {
+    try { App.boot(); }
+    catch (e) {
+      var t = document.getElementById('toast');
+      if (t) t.innerHTML = '<div class="tst bad">시작하지 못했습니다: ' + UI.esc(e.message) + '</div>';
+      if (window.console) console.error(e);
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go);
+  else go();
+})();
+
+</script>
+</body>
+</html>

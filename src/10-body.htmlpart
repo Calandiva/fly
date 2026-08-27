@@ -1,0 +1,62 @@
+<div id="stage">
+  <video id="cam" playsinline muted autoplay class="off"></video>
+  <div id="synth" class="on"></div>
+  <div id="veil"></div>
+  <div id="probe"></div>
+  <canvas id="hud"></canvas>
+
+  <div id="top">
+    <div class="brand"><b>Fly</b><span>AR RADAR</span></div>
+    <div id="stat"></div>
+  </div>
+
+  <div id="tools">
+    <button class="btn icon" id="bList"  title="주변 항공기 목록" aria-label="주변 항공기 목록">☰</button>
+    <button class="btn icon" id="bCam"   title="카메라 켜기/끄기" aria-label="카메라 켜기/끄기">◉</button>
+    <button class="btn icon" id="bLock"  title="레이더 노스업/헤딩업" aria-label="레이더 방향 기준">N</button>
+    <button class="btn icon" id="bSet"   title="설정" aria-label="설정">⚙</button>
+  </div>
+
+  <button id="scope" title="레이더 스코프 — 탭하면 해당 항공기를 선택합니다"><canvas></canvas></button>
+
+  <div id="sheet">
+    <div id="sheetInner" role="dialog" aria-modal="false">
+      <div id="grab"></div>
+      <div id="sheetHead">
+        <div id="sheetTitle">주변 항공기</div>
+        <div class="spacer"></div>
+        <div id="sheetTools"></div>
+        <button class="btn icon" id="bClose" aria-label="닫기">✕</button>
+      </div>
+      <div id="sheetBody"></div>
+    </div>
+  </div>
+
+  <div id="gate">
+    <div id="gateCard" class="panel" style="padding:22px 20px">
+      <div class="logo"><b>Fly</b><span>AR RADAR</span></div>
+      <p class="lead">하늘로 휴대폰을 들면 카메라 화면 위에 실제로 지나가는 항공기가 편명·고도·거리와 함께 겹쳐 보입니다.</p>
+
+      <div class="perm">
+        <div class="ic">◉</div>
+        <div><b>카메라</b><i>하늘 배경 위에 항공기를 겹쳐 그립니다. 영상은 기기 밖으로 나가지 않고 저장되지도 않습니다.</i></div>
+      </div>
+      <div class="perm">
+        <div class="ic">⌖</div>
+        <div><b>위치</b><i>내 좌표를 기준으로 방위·거리·고각을 계산합니다. 항공기 조회 반경을 정하는 데에만 쓰입니다.</i></div>
+      </div>
+      <div class="perm">
+        <div class="ic">⟳</div>
+        <div><b>방향 센서</b><i>나침반과 기울기로 지금 어느 하늘을 보고 있는지 알아냅니다. iOS는 별도 허용이 필요합니다.</i></div>
+      </div>
+
+      <div id="gateBtns">
+        <button class="btn pri" id="bStart">시작하기</button>
+        <button class="btn" id="bDemo">데모로 보기</button>
+      </div>
+      <div id="gateNote">항공기 위치는 공개 ADS-B 네트워크에서 받아옵니다. 실제 관제용으로 쓸 수 없습니다.</div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+</div>
