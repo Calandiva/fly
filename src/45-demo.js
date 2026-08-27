@@ -27,6 +27,25 @@ var Demo = (function () {
     { cs: 'HL1234', reg: 'HL1234', t: 'C172', d: 7,  b: 340, alt: 2800,  gs: 96,  trk: 145, vs: 260 }
   ];
 
+  /* 데모에서도 항로가 보이게 캐시에 직접 심는다 — 네트워크를 타지 않는다 */
+  var ROUTES = {
+    KAL086: ['ICN', 'LAX'], AAR221: ['ICN', 'SYD'], JAL954: ['NRT', 'SIN'],
+    CPA411: ['HKG', 'ICN'], UAE322: ['DXB', 'ICN'], FDX5108: ['ANC', 'CAN'],
+    JJA1204: ['CJU', 'ICN'], TWB712: ['KIX', 'ICN'],
+    ABL8523: ['GMP', 'PUS'], JNA1205: ['GMP', 'CJU']
+  };
+
+  function seedRoutes() {
+    for (var cs in ROUTES) {
+      var c = ROUTES[cs];
+      Route._cache[cs] = {
+        cs: cs, plausible: 1, via: [],
+        from: { code: c[0], ko: Catalog.airport(c[0]), name: null, country: null, lat: null, lon: null },
+        to:   { code: c[1], ko: Catalog.airport(c[1]), name: null, country: null, lat: null, lon: null }
+      };
+    }
+  }
+
   function build() {
     var p = Position.state.ok ? Position.state : DEFAULT;
     sim = SEED.map(function (s, i) {
@@ -74,6 +93,7 @@ var Demo = (function () {
   function start() {
     stop();
     if (!Position.state.ok) Position.set(DEFAULT.lat, DEFAULT.lon, DEFAULT.alt);
+    seedRoutes();
     build();
     step();
     timer = setInterval(step, 1000);

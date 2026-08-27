@@ -237,33 +237,147 @@ var Render = (function () {
   }
 
   /* 라벨 겹침 회피 — 가까운 것부터 자리를 잡고 늦게 온 것을 아래로 민다 */
-  function place(boxes, x, y, w, h) {
-    var cand = [[x, y], [x - w - 26, y], [x, y - h - 10], [x - w - 26, y - h - 10],
-                [x, y + h + 10], [x - w - 26, y + h + 10]];
+  /* mx,my: 마커 한가운데. gap: 마커의 바깥 반지름(고리 포함) + 여백.
+     라벨 상자를 마커 기준으로 잡아야 강조 고리를 파고들지 않는다.
+
+     후보가 화면 밖으로 조금 삐져나오면 잘라 버리지 말고 안쪽으로 밀어
+     넣는다 — 몇 픽셀 차이로 라벨을 통째로 잃는 게 훨씬 나쁘다. */
+  var EDGE = 3;
+  function place(boxes, mx, my, w, h, gap, preferLeft) {
+    if (w > W - EDGE * 2 || h > H - EDGE * 2) return null;
+    var xs = preferLeft ? [mx - gap - w, mx + gap] : [mx + gap, mx - gap - w];
+    var y0 = my - h / 2;
+    var ys = [y0, y0 - h - 10, y0 + h + 10];
+
     /* 가까운 자리를 먼저 다 훑고 나서 아래로 민다.
        후보별로 끝까지 밀어 보면 지시선이 화면을 가로지를 만큼 길어진다. */
     for (var push = 0; push < 4; push++) {
-      for (var c = 0; c < cand.length; c++) {
-        var bx = cand[c][0], by = cand[c][1] + push * (h + 5);
-        if (bx < 4 || bx + w > W - 4 || by < 4 || by + h > H - 4) continue;
-        var clash = false;
-        for (var i = 0; i < boxes.length; i++) {
-          var b = boxes[i];
-          if (bx < b[0] + b[2] + 4 && bx + w + 4 > b[0] && by < b[1] + b[3] + 3 && by + h + 3 > b[1]) { clash = true; break; }
+      for (var yi = 0; yi < ys.length; yi++) {
+        for (var xi = 0; xi < xs.length; xi++) {
+          var bx = Math.max(EDGE, Math.min(W - w - EDGE, xs[xi]));
+          var by = ys[yi] + push * (h + 5);
+          if (by < EDGE || by + h > H - EDGE) continue;
+          var clash = false;
+          for (var i = 0; i < boxes.length; i++) {
+            var b = boxes[i];
+            if (bx < b[0] + b[2] + 4 && bx + w + 4 > b[0] &&
+                by < b[1] + b[3] + 3 && by + h + 3 > b[1]) { clash = true; break; }
+          }
+          if (!clash) return [bx, by];
         }
-        if (!clash) return [bx, by];
       }
     }
     return null;
   }
 
-  function label(a, metric) {
+  function label(a, metric, extra) {
     var l1 = a.cs || a.reg || a.id.toUpperCase();
     var t = a.type ? a.type.toUpperCase() : null;
     var l2 = (t ? t + ' · ' : '') + Geo.fmtAlt(a.altFt, metric);
     var vs = a.vsFpm > 200 ? ' ▲' : a.vsFpm < -200 ? ' ▼' : '';
-    var l3 = Geo.fmtDist(a.slantM, metric) + vs;
-    return [l1, l2, l3];
+    var out = [l1, l2, Geo.fmtDist(a.slantM, metric) + vs];
+    if (extra) {
+      var r = Route.get(a.cs);
+      if (r) {
+        var rt = Route.label(r.from) + ' → ' + Route.label(r.to);
+        if (rt.length > 22) rt = rt.slice(0, 21) + '…';
+        out.push(rt);
+      }
+      var c = a.tca;
+      if (c && !c.past && !c.beyond && c.t < 900) {
+        var when = c.t < 60 ? Math.round(c.t) + '초' : Math.round(c.t / 60) + '분';
+        out.push('최근접 ' + Geo.fmtDist(c.dist, metric) + ' · ' + when + ' 뒤');
+      }
+    }
+    return out;
+  }
+
+  /* 선택한 항공기의 지나온 자취와 앞으로 갈 길.
+     전부 그리면 하늘이 실타래가 된다 — 고른 한 대만 그린다. */
+  function path(g, a, nowMs, metric) {
+    /* 지나온 자취: 오래된 쪽일수록 흐리게 */
+    var tr = a.trail;
+    if (tr && tr.length > 1) {
+      var T = Track.T, oldest = tr[0][T.TIME], span = Math.max(1, nowMs - oldest);
+      for (var i = 1; i < tr.length; i++) {
+        var p0 = View.project(tr[i - 1][T.AZ], tr[i - 1][T.EL]);
+        var p1 = View.project(tr[i][T.AZ], tr[i][T.EL]);
+        if (!p0.front || !p1.front) continue;
+        g.strokeStyle = 'rgba(111,216,255,' + (0.10 + 0.42 * ((tr[i][T.TIME] - oldest) / span)).toFixed(3) + ')';
+        g.lineWidth = 1.6;
+        g.beginPath(); g.moveTo(p0.x, p0.y); g.lineTo(p1.x, p1.y); g.stroke();
+      }
+    }
+
+    var dir = 0;                     // 예측선이 화면에서 뻗는 좌우 방향
+
+    /* 앞으로 갈 길: 점선. 1분마다 눈금을 찍되 최근접 지점까지는 이어 준다 */
+    var c0 = a.tca;
+    var span = 240;
+    if (c0 && !c0.past && !c0.beyond && c0.t > span) span = Math.min(900, c0.t + 40);
+    var fc = Track.forecast(a, span, Math.max(15, span / 24));
+    if (fc.length > 1) {
+      g.save();
+      g.setLineDash([4, 5]);
+      g.strokeStyle = 'rgba(111,216,255,.55)';
+      g.lineWidth = 1.4;
+      g.beginPath();
+      var started = false;
+      for (var j = 0; j < fc.length; j++) {
+        var q = View.project(fc[j].az, fc[j].el);
+        if (!q.front) { started = false; continue; }
+        if (!started) { g.moveTo(q.x, q.y); started = true; } else g.lineTo(q.x, q.y);
+      }
+      g.stroke();
+      g.restore();
+
+      var p0 = View.project(fc[0].az, fc[0].el);
+      for (var k = 1; k < fc.length; k++) {
+        var pk = View.project(fc[k].az, fc[k].el);
+        if (p0.front && pk.front && Math.abs(pk.x - p0.x) > 20) { dir = pk.x - p0.x; break; }
+      }
+
+      /* 정면으로 다가오는 항공기는 예측선이 한 점으로 눌려 눈금이 겹친다.
+         앞서 찍은 눈금과 너무 가까우면 건너뛴다. */
+      var lastX = -1e9, lastY = -1e9;
+      for (var m = 0; m < fc.length; m++) {
+        if (fc[m].t < 30 || Math.abs(fc[m].t % 60) > 1) continue;
+        var t = View.project(fc[m].az, fc[m].el);
+        if (!t.front || !View.onScreen(t, 0)) continue;
+        if (Math.hypot(t.x - lastX, t.y - lastY) < 30) continue;
+        lastX = t.x; lastY = t.y;
+        g.fillStyle = 'rgba(111,216,255,.7)';
+        g.beginPath(); g.arc(t.x, t.y, 2.6, 0, 6.2832); g.fill();
+        g.font = '9px ' + FONT;
+        g.fillStyle = 'rgba(191,238,255,.8)';
+        g.textAlign = 'center'; g.textBaseline = 'top';
+        g.fillText(Math.round(fc[m].t / 60) + '분', t.x, t.y + 6);
+      }
+    }
+
+    /* 최근접 통과 지점 */
+    var c = a.tca;
+    if (c && !c.past && !c.beyond && c.t < 900) {
+      var cp = View.project(c.az, c.el);
+      if (cp.front && View.onScreen(cp, 60)) {
+        g.save();
+        g.translate(cp.x, cp.y);
+        g.strokeStyle = '#FFC24B'; g.lineWidth = 1.6;
+        g.beginPath();
+        g.moveTo(0, -7); g.lineTo(7, 0); g.lineTo(0, 7); g.lineTo(-7, 0); g.closePath();
+        g.stroke();
+        g.font = '600 10px ' + FONT;
+        g.textAlign = 'center'; g.textBaseline = 'bottom';
+        var txt = '최근접 ' + Geo.fmtDist(c.dist, metric);
+        var w = g.measureText(txt).width + 10;
+        g.fillStyle = 'rgba(6,12,10,.8)';
+        roundRect(g, -w / 2, -26, w, 15, 4); g.fill();
+        g.fillStyle = '#FFC24B';
+        g.fillText(txt, 0, -13);
+        g.restore();
+      }
+    }
+    return dir;
   }
 
   /* ── 메인 프레임 ──────────────────────────────────────────── */
@@ -278,6 +392,10 @@ var Render = (function () {
     if (opt.synth) synth(cx);
     horizon(cx, o.heading);
     compass(cx, o.heading, absolute);
+
+    var selA = sel ? Source.fleet[sel] : null;
+    var pathDx = 0;
+    if (opt.trail && selA && selA.az != null) pathDx = path(cx, selA, opt.now, metric);
 
     var boxes = reserved.slice(), labeled = 0, offs = [];
     var maxLabels = W < 420 ? 8 : 14;
@@ -295,11 +413,12 @@ var Render = (function () {
       }
 
       var isSel = sel === a.id;
+      var near = Track.imminent(a, opt.alertM, opt.alertS);
       var col = altColor(a.altFt);
       /* 가까울수록 크게 — 2km 에서 18px, 90km 에서 6px */
       var s = 18 - 12 * Math.min(1, Math.max(0, (a.slantM - 2000) / 88000));
       var alpha = 0.45 + 0.55 * Math.min(1, Math.max(0, 1 - (a.slantM - 15000) / 130000));
-      if (isSel) alpha = 1;
+      if (isSel || near) alpha = 1;
 
       cx.save();
       cx.globalAlpha = alpha;
@@ -313,6 +432,15 @@ var Render = (function () {
       cx.stroke();
       cx.restore();
 
+      if (near) {
+        /* 곧 가까이 지나갈 항공기 — 숨쉬듯 커지는 고리로 눈에 띄게 */
+        var ph = 0.5 + 0.5 * Math.sin(opt.now / 260);
+        cx.save();
+        cx.strokeStyle = 'rgba(255,194,75,' + (0.85 - 0.45 * ph).toFixed(2) + ')';
+        cx.lineWidth = 2;
+        cx.beginPath(); cx.arc(p.x, p.y, s * 1.15 + 10 + ph * 9, 0, 6.2832); cx.stroke();
+        cx.restore();
+      }
       if (isSel) {
         cx.save();
         cx.globalAlpha = 0.9; cx.strokeStyle = '#6FD8FF'; cx.lineWidth = 1.6;
@@ -326,16 +454,17 @@ var Render = (function () {
 
       /* 라벨 */
       if (labeled >= maxLabels && !isSel) continue;
-      var L = label(a, metric);
-      cx.font = '600 12px ' + FONT;
+      var L = label(a, metric, isSel || near);
       var w = 0, j;
       for (j = 0; j < L.length; j++) {
         cx.font = (j === 0 ? '600 12.5px ' : '11px ') + FONT;
         w = Math.max(w, cx.measureText(L[j]).width);
       }
       w += 14;
-      var h = 46;
-      var pos = place(boxes, p.x + s + 12, p.y - h / 2, w, h);
+      var h = 10 + L.length * 12;
+      /* 강조 고리가 가장 크게 부푼 상태를 기준으로 여백을 잡는다 */
+      var gap = s * 1.15 + (near ? 21 : isSel ? 17 : 10) + 6;
+      var pos = place(boxes, p.x, p.y, w, h, gap, isSel && pathDx > 0);
       if (!pos) continue;
       boxes.push([pos[0], pos[1], w, h]);
       labeled++;
@@ -360,10 +489,12 @@ var Render = (function () {
       cx.fillStyle = isSel ? '#BFEEFF' : '#EAF4EF';
       cx.fillText(L[0], pos[0] + 7, pos[1] + 12);
       cx.font = '11px ' + FONT;
-      cx.fillStyle = col;
-      cx.fillText(L[1], pos[0] + 7, pos[1] + 26);
-      cx.fillStyle = 'rgba(159,182,172,.95)';
-      cx.fillText(L[2], pos[0] + 7, pos[1] + 38);
+      for (var li = 1; li < L.length; li++) {
+        cx.fillStyle = li === 1 ? col
+                     : /^최근접/.test(L[li]) ? '#FFC24B'
+                     : li === 2 ? 'rgba(159,182,172,.95)' : 'rgba(191,238,255,.92)';
+        cx.fillText(L[li], pos[0] + 7, pos[1] + 12 + li * 12);
+      }
       cx.restore();
     }
 
@@ -482,31 +613,59 @@ var Render = (function () {
     sx.fillStyle = 'rgba(159,182,172,.7)';
     sx.fillText(Geo.fmtDist(rangeM, opt.metric), 7, SH - 15);
 
-    /* 항공기 */
-    for (var i = list.length - 1; i >= 0; i--) {
+    /* 항공기 — 자취를 먼저 깔고 그 위에 점을 찍는다 */
+    var T = Track.T;
+    var pol = function (az, dist) {
+      var rr = (dist / rangeM) * R, th = Geo.rad(Geo.norm360(az - up) - 90);
+      return [cxp + Math.cos(th) * rr, cyp + Math.sin(th) * rr];
+    };
+
+    for (var i = list.length - 1; opt.trail && i >= 0; i--) {
       var a = list[i];
       if (a.distM > rangeM) continue;
       if (a.altFt != null && a.altFt < opt.minAltFt) continue;
-      var rr = (a.distM / rangeM) * R;
-      var th = Geo.rad(Geo.norm360(a.az - up) - 90);
-      var x = cxp + Math.cos(th) * rr, y = cyp + Math.sin(th) * rr;
       var isSel = opt.selected === a.id;
+      var tr = a.trail;
+      if (!tr || tr.length < 2) continue;
+      sx.strokeStyle = isSel ? 'rgba(111,216,255,.75)' : 'rgba(95,227,161,.30)';
+      sx.lineWidth = isSel ? 1.6 : 1;
+      sx.beginPath();
+      var began = false;
+      for (var q = 0; q < tr.length; q++) {
+        if (tr[q][T.DIST] > rangeM) { began = false; continue; }
+        var pt = pol(tr[q][T.AZ], tr[q][T.DIST]);
+        if (!began) { sx.moveTo(pt[0], pt[1]); began = true; } else sx.lineTo(pt[0], pt[1]);
+      }
+      sx.stroke();
+    }
+
+    for (i = list.length - 1; i >= 0; i--) {
+      var a2 = list[i];
+      if (a2.distM > rangeM) continue;
+      if (a2.altFt != null && a2.altFt < opt.minAltFt) continue;
+      var sel2 = opt.selected === a2.id;
+      var near2 = Track.imminent(a2, opt.alertM, opt.alertS);
+      var xy = pol(a2.az, a2.distM), x = xy[0], y = xy[1];
 
       /* 기수 방향 꼬리 */
-      if (a.track != null) {
-        var tt = Geo.rad(Geo.norm360(a.track - up) - 90);
-        sx.strokeStyle = isSel ? '#6FD8FF' : 'rgba(95,227,161,.5)';
+      if (a2.track != null) {
+        var tt = Geo.rad(Geo.norm360(a2.track - up) - 90);
+        sx.strokeStyle = sel2 ? '#6FD8FF' : 'rgba(95,227,161,.5)';
         sx.lineWidth = 1;
         sx.beginPath(); sx.moveTo(x, y);
         sx.lineTo(x + Math.cos(tt) * 7, y + Math.sin(tt) * 7); sx.stroke();
       }
-      sx.fillStyle = isSel ? '#6FD8FF' : altColor(a.altFt);
-      sx.beginPath(); sx.arc(x, y, isSel ? 3.6 : 2.4, 0, 6.2832); sx.fill();
-      if (isSel) {
+      sx.fillStyle = sel2 ? '#6FD8FF' : altColor(a2.altFt);
+      sx.beginPath(); sx.arc(x, y, sel2 ? 3.6 : 2.4, 0, 6.2832); sx.fill();
+      if (near2 && !sel2) {
+        sx.strokeStyle = 'rgba(255,194,75,.85)'; sx.lineWidth = 1.2;
+        sx.beginPath(); sx.arc(x, y, 6, 0, 6.2832); sx.stroke();
+      }
+      if (sel2) {
         sx.strokeStyle = '#6FD8FF'; sx.lineWidth = 1;
         sx.beginPath(); sx.arc(x, y, 7, 0, 6.2832); sx.stroke();
       }
-      scopeHit.push({ id: a.id, x: x, y: y });
+      scopeHit.push({ id: a2.id, x: x, y: y });
     }
 
     /* 관측자 */

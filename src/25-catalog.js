@@ -195,6 +195,54 @@ var Catalog = (function () {
     ['HK-', '콜롬비아'], ['HP-', '파나마'], ['OB-', '페루']
   ];
 
+  /* ── 공항 IATA 코드 → 한글 이름 ────────────────────────────
+     항로 조회가 주는 영문 이름 대신 쓴다. 없으면 API 가 준 이름 그대로. */
+  var AIRPORT = expand(
+    /* 대한민국 */
+    'ICN:인천|GMP:김포|CJU:제주|PUS:김해(부산)|TAE:대구|KWJ:광주|RSU:여수|USN:울산|' +
+    'CJJ:청주|KUV:군산|WJU:원주|HIN:사천|MWX:무안|KPO:포항경주|YNY:양양|' +
+    /* 일본 */
+    'NRT:도쿄 나리타|HND:도쿄 하네다|KIX:오사카 간사이|ITM:오사카 이타미|NGO:나고야 주부|' +
+    'FUK:후쿠오카|CTS:삿포로 신치토세|OKA:오키나와 나하|KOJ:가고시마|HIJ:히로시마|' +
+    'KMJ:구마모토|OIT:오이타|TAK:다카마쓰|KMQ:고마쓰|AOJ:아오모리|SDJ:센다이|' +
+    /* 중화권 */
+    'PEK:베이징 서우두|PKX:베이징 다싱|PVG:상하이 푸둥|SHA:상하이 훙차오|CAN:광저우|' +
+    'SZX:선전|CTU:청두 솽류|TFU:청두 톈푸|CKG:충칭|XIY:시안|KMG:쿤밍|HGH:항저우|' +
+    'NKG:난징|TAO:칭다오|DLC:다롄|SHE:선양|HRB:하얼빈|TSN:톈진|WEH:웨이하이|YNT:옌타이|' +
+    'HKG:홍콩|MFM:마카오|TPE:타이베이 타오위안|TSA:타이베이 쑹산|KHH:가오슝|' +
+    /* 동남아 · 남아시아 */
+    'SIN:싱가포르 창이|BKK:방콕 수완나품|DMK:방콕 돈므앙|HKT:푸껫|CNX:치앙마이|' +
+    'CEI:치앙라이|USM:꼬사무이|KUL:쿠알라룸푸르|PEN:페낭|BKI:코타키나발루|' +
+    'CGK:자카르타|DPS:발리 덴파사르|SUB:수라바야|MNL:마닐라|CEB:세부|CRK:클라크|' +
+    'SGN:호찌민|HAN:하노이|DAD:다낭|CXR:나트랑 깜라인|PQC:푸꾸옥|' +
+    'PNH:프놈펜|REP:씨엠립|VTE:비엔티안|RGN:양곤|' +
+    'DEL:델리|BOM:뭄바이|BLR:벵갈루루|MAA:첸나이|HYD:하이데라바드|CCU:콜카타|' +
+    'CMB:콜롬보|DAC:다카|KTM:카트만두|MLE:몰디브 말레|' +
+    /* 중동 · 아프리카 */
+    'DXB:두바이|AUH:아부다비|DOH:도하|RUH:리야드|JED:제다|KWI:쿠웨이트|BAH:바레인|' +
+    'MCT:무스카트|IST:이스탄불|SAW:이스탄불 사비하괵첸|TLV:텔아비브|CAI:카이로|' +
+    'ADD:아디스아바바|NBO:나이로비|JNB:요하네스버그|CPT:케이프타운|CMN:카사블랑카|' +
+    /* 유럽 */
+    'LHR:런던 히스로|LGW:런던 개트윅|STN:런던 스탠스테드|CDG:파리 샤를드골|ORY:파리 오를리|' +
+    'FRA:프랑크푸르트|MUC:뮌헨|BER:베를린|DUS:뒤셀도르프|HAM:함부르크|' +
+    'AMS:암스테르담|BRU:브뤼셀|ZRH:취리히|GVA:제네바|VIE:빈|PRG:프라하|BUD:부다페스트|' +
+    'WAW:바르샤바|CPH:코펜하겐|ARN:스톡홀름|OSL:오슬로|HEL:헬싱키|KEF:레이캬비크|' +
+    'MAD:마드리드|BCN:바르셀로나|LIS:리스본|FCO:로마 피우미치노|MXP:밀라노 말펜사|' +
+    'VCE:베네치아|ATH:아테네|DUB:더블린|SVO:모스크바 셰레메티예보|' +
+    /* 북미 */
+    'LAX:로스앤젤레스|SFO:샌프란시스코|SEA:시애틀|SAN:샌디에이고|LAS:라스베이거스|' +
+    'PHX:피닉스|DEN:덴버|DFW:댈러스 포트워스|IAH:휴스턴|AUS:오스틴|ATL:애틀랜타|' +
+    'MIA:마이애미|MCO:올랜도|ORD:시카고 오헤어|MDW:시카고 미드웨이|DTW:디트로이트|' +
+    'MSP:미니애폴리스|BOS:보스턴|JFK:뉴욕 존에프케네디|EWR:뉴어크|LGA:뉴욕 라과디아|' +
+    'IAD:워싱턴 덜레스|DCA:워싱턴 레이건|PHL:필라델피아|CLT:샬럿|HNL:호놀룰루|' +
+    'ANC:앵커리지|GUM:괌|SPN:사이판|' +
+    'YVR:밴쿠버|YYZ:토론토|YUL:몬트리올|YYC:캘거리|MEX:멕시코시티|CUN:칸쿤|' +
+    /* 중남미 · 오세아니아 */
+    'GRU:상파울루|GIG:리우데자네이루|EZE:부에노스아이레스|SCL:산티아고|LIM:리마|BOG:보고타|' +
+    'SYD:시드니|MEL:멜버른|BNE:브리즈번|PER:퍼스|AKL:오클랜드|CHC:크라이스트처치|' +
+    'NAN:피지 난디|PPT:타히티 파페에테'
+  );
+
   /* ── ICAO 24bit 주소 대역 → 등록국 (등록기호가 없을 때의 보조) ── */
   var HEX = [
     [0x008000, 0x00FFFF, '남아프리카'], [0x010000, 0x017FFF, '이집트'],
@@ -256,9 +304,12 @@ var Catalog = (function () {
     return null;
   }
 
+  /* IATA 코드 → 한글 이름. 모르면 null (호출 쪽에서 원문을 쓴다) */
+  function airport(iata) { return iata ? (AIRPORT[iata.toUpperCase()] || null) : null; }
+
   return {
     typeName: typeName, flight: flight, category: category,
-    squawk: squawk, country: country,
-    TYPE: TYPE, AIRLINE: AIRLINE
+    squawk: squawk, country: country, airport: airport,
+    TYPE: TYPE, AIRLINE: AIRLINE, AIRPORT: AIRPORT
   };
 })();

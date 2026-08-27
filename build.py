@@ -11,7 +11,7 @@ import io, os, sys
 
 SRC = 'src'
 JS = ['20-geo.js', '25-catalog.js', '30-orient.js', '32-sensors.js',
-      '40-source.js', '45-demo.js', '50-render.js', '60-ui.js',
+      '35-track.js', '40-source.js', '42-route.js', '45-demo.js', '50-render.js', '60-ui.js',
       '80-app.js', '99-boot.js']
 
 DESC = ('휴대폰을 하늘로 들면 카메라 위에 지금 지나가는 항공기가 '

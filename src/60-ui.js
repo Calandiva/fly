@@ -101,8 +101,9 @@ var UI = (function () {
     el.title.textContent = '주변 항공기';
     el.tools.innerHTML =
       '<div class="seg" id="sortSeg">' +
-      '<button data-k="dist"' + (sortBy === 'dist' ? ' class="on"' : '') + '>가까운 순</button>' +
-      '<button data-k="alt"' + (sortBy === 'alt' ? ' class="on"' : '') + '>낮은 순</button></div>';
+      '<button data-k="dist"' + (sortBy === 'dist' ? ' class="on"' : '') + '>가까운</button>' +
+      '<button data-k="alt"' + (sortBy === 'alt' ? ' class="on"' : '') + '>낮은</button>' +
+      '<button data-k="tca"' + (sortBy === 'tca' ? ' class="on"' : '') + '>곧 지나감</button></div>';
     el.tools.querySelector('#sortSeg').onclick = function (e) {
       var b = e.target.closest('button'); if (!b) return;
       sortBy = b.dataset.k; paint(app, true);
@@ -110,12 +111,19 @@ var UI = (function () {
 
     var list = app.list.slice();
     if (sortBy === 'alt') list.sort(function (a, b) { return (a.altFt || 0) - (b.altFt || 0); });
+    else if (sortBy === 'tca') {
+      /* 다가오는 것만, 가장 가까이 스칠 것부터 */
+      list = list.filter(function (a) {
+        return a.tca && !a.tca.past && !a.tca.beyond;
+      }).sort(function (a, b) { return a.tca.dist - b.tca.dist; });
+    }
 
     if (!list.length) {
       el.body.innerHTML = '<div class="empty">' +
-        (Position.state.ok
-          ? '조회 반경 안에 항공기가 없습니다.<br>설정에서 반경을 넓히거나 고도 필터를 확인해 보세요.'
-          : '위치를 먼저 확인해야 주변 항공기를 찾을 수 있습니다.') + '</div>';
+        (!Position.state.ok ? '위치를 먼저 확인해야 주변 항공기를 찾을 수 있습니다.'
+         : sortBy === 'tca' ? '다가오는 항공기가 없습니다.<br>지금 잡히는 항공기는 모두 멀어지는 중입니다.'
+         : '조회 반경 안에 항공기가 없습니다.<br>설정에서 반경을 넓히거나 고도 필터를 확인해 보세요.') +
+        '</div>';
       return;
     }
 
@@ -125,16 +133,28 @@ var UI = (function () {
       var f = Catalog.flight(a.cs);
       var tn = Catalog.typeName(a.type);
       var sub = [f ? f.airline + ' ' + f.number : null, tn, a.reg].filter(Boolean).join(' · ');
+      var r = Route.get(a.cs);
+      var c = a.tca, near = Track.imminent(a, app.cfg.alertKm * 1000, app.cfg.alertMin * 60);
+
+      var right = sortBy === 'tca' && c
+        ? '<b>' + esc(Geo.fmtDist(c.dist, m)) + '</b>' +
+          esc(c.t < 60 ? Math.round(c.t) + '초 뒤' : Math.round(c.t / 60) + '분 뒤') + '<br>' +
+          esc('고각 ' + c.el.toFixed(0) + '°')
+        : '<b>' + esc(Geo.fmtDist(a.slantM, m)) + '</b>' +
+          esc(Geo.fmtAlt(a.altFt, m)) + '<br>' +
+          esc(Geo.fmtAz(a.az) + ' ' + Geo.compass(a.az));
+
       html +=
-        '<div class="row' + (app.selected === a.id ? ' sel' : '') + '" data-id="' + esc(a.id) + '">' +
+        '<div class="row' + (app.selected === a.id ? ' sel' : '') + (near ? ' near' : '') +
+          '" data-id="' + esc(a.id) + '">' +
           '<div class="glyph" style="color:' + Render.altColor(a.altFt) + '">' + glyphSvg(a.relTrack) + '</div>' +
           '<div style="min-width:0">' +
-            '<div class="cs">' + esc(a.cs || a.reg || a.id.toUpperCase()) + '</div>' +
+            '<div class="cs">' + esc(a.cs || a.reg || a.id.toUpperCase()) +
+              (near ? ' <span class="tag">곧 지나감</span>' : '') + '</div>' +
+            (r ? '<div class="rt-line">' + esc(Route.text(r)) + '</div>' : '') +
             '<div class="sub">' + esc(sub || '정보 없음') + '</div>' +
           '</div>' +
-          '<div class="rt"><b>' + esc(Geo.fmtDist(a.slantM, m)) + '</b>' +
-            esc(Geo.fmtAlt(a.altFt, m)) + '<br>' +
-            esc(Geo.fmtAz(a.az) + ' ' + Geo.compass(a.az)) + '</div>' +
+          '<div class="rt">' + right + '</div>' +
         '</div>';
     }
     el.body.innerHTML = html;
@@ -184,6 +204,9 @@ var UI = (function () {
       guide = g.join(', ');
     }
 
+    var c = a.tca;
+    var route = Route.get(a.cs);
+
     var cells = [
       ['고도', Geo.fmtAlt(a.altFt, m) + (fl ? '<small>' + fl + '</small>' : '')],
       ['거리', Geo.fmtDist(a.slantM, m)],
@@ -200,6 +223,23 @@ var UI = (function () {
     var meta = [f ? f.airline + ' ' + f.number + '편' : null, tn, a.reg, country]
       .filter(Boolean).join(' · ');
 
+    /* 최근접 통과 — 이 앱에서 가장 쓸모 있는 한 줄이라 위쪽에 크게 둔다 */
+    var tcaBlock = '';
+    if (c && !c.past && !c.beyond) {
+      var when = c.t < 60 ? Math.round(c.t) + '초 뒤' : Math.round(c.t / 60) + '분 ' +
+                 (Math.round(c.t) % 60 ? (Math.round(c.t) % 60) + '초 ' : '') + '뒤';
+      var overhead = c.el > 70 ? '거의 머리 위' : c.el > 40 ? '높은 하늘' : Geo.compass(c.az) + '쪽 하늘';
+      tcaBlock =
+        '<div class="tca">' +
+          '<div class="tca-h">최근접 통과</div>' +
+          '<div class="tca-v">' + esc(Geo.fmtDist(c.dist, m)) + '<span>까지</span></div>' +
+          '<div class="tca-s">' + esc(when) + ' · ' + esc(overhead) +
+            ' · 고각 ' + c.el.toFixed(0) + '° · 방위 ' + esc(Geo.fmtAz(c.az) + ' ' + Geo.compass(c.az)) + '</div>' +
+        '</div>';
+    } else if (c && c.past) {
+      tcaBlock = '<div class="tca past"><div class="tca-s">가장 가까운 지점을 이미 지나 멀어지는 중입니다</div></div>';
+    }
+
     el.body.innerHTML =
       '<div class="dhead">' +
         '<div class="glyph" style="color:' + Render.altColor(a.altFt) + ';width:34px;height:34px">' +
@@ -207,18 +247,33 @@ var UI = (function () {
         '<div style="min-width:0"><div class="cs">' + esc(a.cs || a.reg || a.id.toUpperCase()) + '</div>' +
         '<div class="meta">' + esc(meta || 'ICAO ' + a.id.toUpperCase()) + '</div></div>' +
       '</div>' +
+      (route ? '<div class="route">' +
+          '<b>' + esc(Route.label(route.from)) + '</b>' +
+          '<i>' + (route.from.code !== Route.label(route.from) ? esc(route.from.code) : '') + '</i>' +
+          '<span>→</span>' +
+          '<b>' + esc(Route.label(route.to)) + '</b>' +
+          '<i>' + (route.to.code !== Route.label(route.to) ? esc(route.to.code) : '') + '</i>' +
+          (route.via.length ? '<em>경유 ' + esc(route.via.map(Route.label).join(', ')) + '</em>' : '') +
+        '</div>' : '') +
       (sq ? '<div style="margin-top:10px" class="chip bad">' + esc(sq.t) + '</div>' : '') +
       (a.emg ? '<div style="margin-top:10px" class="chip bad">비상 신호: ' + esc(a.emg) + '</div>' : '') +
-      '<div style="margin-top:11px;padding:9px 11px;border-radius:8px;background:rgba(111,216,255,.10);' +
-        'border:1px solid rgba(111,216,255,.28);font-size:12.5px;color:#BFEEFF">⌖ ' + esc(guide) + '</div>' +
-      '<div class="dgrid">' + cells.map(function (c) {
-        return '<div class="cell"><k>' + esc(c[0]) + '</k><v>' + c[1] + '</v></div>';
+      tcaBlock +
+      '<div class="guide">⌖ ' + esc(guide) +
+        (Orient.usable() ? '' : ' <button class="btn sm" id="bLook">이 방향 보기</button>') + '</div>' +
+      '<div class="dgrid">' + cells.map(function (x) {
+        return '<div class="cell"><k>' + esc(x[0]) + '</k><v>' + x[1] + '</v></div>';
       }).join('') + '</div>' +
       '<div style="margin-top:12px;font-size:11px;color:var(--ink-3);line-height:1.6">' +
         'ICAO 24bit ' + esc(a.id.toUpperCase()) +
         (a.cat ? ' · ' + esc(Catalog.category(a.cat) || a.cat) : '') +
         ' · 출처 ' + esc(Source.state.providerName) +
+        (Route.state.off && app.cfg.route ? ' · 항로 조회 중단됨' : '') +
       '</div>';
+
+    var look = document.getElementById('bLook');
+    if (look) look.onclick = function () {
+      if (App.lookAt(a.id)) { close(); UI.toast('그 방향으로 시선을 돌렸습니다'); }
+    };
   }
 
   /* ── 설정 ─────────────────────────────────────────────────── */
@@ -249,7 +304,16 @@ var UI = (function () {
       row('레이더 기준', '스코프 위쪽을 무엇에 맞출지', '<div class="seg" id="upSeg">' +
         '<button data-v="0"' + (!c.headingUp ? ' class="on"' : '') + '>노스업</button>' +
         '<button data-v="1"' + (c.headingUp ? ' class="on"' : '') + '>헤딩업</button></div>') +
-      row('접근 알림음', '10 km 안으로 새 항공기가 들어오면 울립니다', sw('setChime', c.chime)) +
+      row('궤적', '지나온 자취를 스코프에, 선택한 항공기는 예상 경로까지', sw('setTrail', c.trail)) +
+      row('화면 꺼짐 방지', '하늘을 보는 동안 화면이 꺼지지 않게 합니다', sw('setWake', c.wake)) +
+
+      '<div class="sechead">근접 통과 알림</div>' +
+      row('알림', '가까이 지나갈 항공기를 미리 알려 줍니다', sw('setAlert', c.alertOn)) +
+      row('알림음', '알림과 함께 소리도 냅니다', sw('setChime', c.chime)) +
+      row('알림 거리', '이보다 가까이 스칠 때만 알립니다',
+        slider('setAlertKm', 1, 40, 1, Math.round(c.alertKm), ' km'), 'col') +
+      row('예보 시간', '이 시간 안에 다가올 항공기까지 봅니다',
+        slider('setAlertMin', 1, 20, 1, Math.round(c.alertMin), ' 분'), 'col') +
 
       '<div class="sechead">보정</div>' +
       row('카메라 화각', '화면 속 항공기가 실제보다 안쪽/바깥쪽에 있으면 조절하세요',
@@ -275,6 +339,9 @@ var UI = (function () {
         Source.PROVIDERS.map(function (p, i) {
           return '<option value="' + i + '"' + (i === Source.state.provider ? ' selected' : '') + '>' + esc(p.name) + '</option>';
         }).join('') + '</select>') +
+      row('항로 조회', '편명으로 출발·도착 공항을 찾습니다 (adsb.lol)' +
+        (Route.state.off ? ' — 연속 실패로 중단됨' : Route.state.hits ? ' — ' + Route.state.hits + '건 확인' : ''),
+        sw('setRoute', c.route)) +
       row('데모 모드', '실제 수신 대신 가상의 항공기를 띄웁니다', sw('setDemo', c.demo)) +
 
       '<div style="margin-top:16px;font-size:11px;color:var(--ink-3);line-height:1.65">' +
@@ -308,7 +375,16 @@ var UI = (function () {
     seg('unitSeg', function (v) { c.metric = v; App.save(); });
     seg('upSeg', function (v) { c.headingUp = v; App.save(); });
     chk('setCam', function (v) { App.setCamera(v); });
+    chk('setTrail', function (v) { c.trail = v; App.save(); });
+    chk('setWake', function (v) { App.setWake(v); });
+    chk('setAlert', function (v) { c.alertOn = v; App.save(); });
     chk('setChime', function (v) { c.chime = v; App.save(); });
+    chk('setRoute', function (v) {
+      c.route = v; Route.setOn(v); App.save();
+      toast(v ? '항로를 조회합니다' : '항로 조회를 끕니다');
+    });
+    rng('setAlertKm', ' km', function (v) { c.alertKm = v; App.save(); });
+    rng('setAlertMin', ' 분', function (v) { c.alertMin = v; App.save(); });
     chk('setDemo', function (v) { c.demo = v; Source.setDemo(v); App.save(); toast(v ? '데모 항공기를 띄웁니다' : '실제 수신으로 돌아갑니다'); });
     rng('setFov', '°', function (v) { c.fov = v; View.setFov(v); App.save(); });
     rng('setOff', '°', function (v) { c.headingOffset = v; Orient.setOffset(v); App.save(); });

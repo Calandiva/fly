@@ -29,7 +29,8 @@ var Source = (function () {
     provider: 0, providerName: PROVIDERS[0].name,
     demo: false, live: false,
     lastOk: 0, lastTry: 0, lastErr: null, fails: 0,
-    count: 0, fetching: false, latency: 0
+    count: 0, fetching: false, latency: 0,
+    tIngest: 0, tSolved: 0
   };
 
   var fleet = Object.create(null);     // id → 항공기
@@ -161,6 +162,7 @@ var Source = (function () {
       if (!seen[k] && nowMs - (fleet[k].tSeen || 0) > cfg.maxAgeMs) delete fleet[k];
     }
     st.count = Object.keys(fleet).length;
+    st.tIngest = nowMs;
   }
 
   /* ── 조회 ─────────────────────────────────────────────────── */
@@ -290,6 +292,13 @@ var Source = (function () {
       out.push(a);
     }
     out.sort(function (x, y) { return x.slantM - y.slantM; });
+
+    /* 궤적과 최근접 통과는 관측이 갱신됐을 때만 다시 푼다.
+       입력이 그대로인데 매 프레임 푸는 건 낭비다. */
+    if (st.tIngest && st.tIngest !== st.tSolved) {
+      st.tSolved = st.tIngest;
+      Track.update(fleet, nowMs);
+    }
     return out;
   }
 

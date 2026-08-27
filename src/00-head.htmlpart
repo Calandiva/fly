@@ -150,6 +150,37 @@ button,input,select{font:inherit;color:inherit}
 .row .rt b{display:block;font-size:13px;color:var(--ink);font-weight:600}
 .empty{padding:26px 12px;text-align:center;color:var(--ink-3);font-size:12.5px;line-height:1.7}
 
+/* 목록: 항로 줄과 임박 표시 */
+.row.near{background:rgba(255,194,75,.10);border-color:rgba(255,194,75,.30)}
+.rt-line{font-size:11.5px;color:var(--sel);margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tag{display:inline-block;vertical-align:2px;margin-left:5px;padding:1px 6px;border-radius:999px;
+  background:rgba(255,194,75,.18);border:1px solid rgba(255,194,75,.4);
+  color:var(--amber);font-family:var(--sans);font-size:9.5px;font-weight:600;letter-spacing:0}
+
+/* 상세: 항로 · 최근접 통과 · 시선 안내 */
+.route{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin-top:12px;
+  padding:10px 12px;border-radius:var(--r-sm);
+  background:rgba(111,216,255,.09);border:1px solid rgba(111,216,255,.26)}
+.route b{font-size:14.5px;font-weight:600;color:#BFEEFF}
+.route i{font-style:normal;font-family:var(--mono);font-size:10px;color:var(--ink-3)}
+.route span{color:var(--sel-2);font-size:14px;margin:0 2px}
+.route em{flex-basis:100%;font-style:normal;font-size:11px;color:var(--ink-3);margin-top:2px}
+.tca{margin-top:11px;padding:11px 13px;border-radius:var(--r-sm);
+  background:rgba(255,194,75,.10);border:1px solid rgba(255,194,75,.30)}
+.tca.past{background:rgba(255,255,255,.04);border-color:var(--line)}
+.tca-h{font-family:var(--mono);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--amber);margin-bottom:3px}
+.tca-v{font-family:var(--mono);font-size:26px;font-weight:700;letter-spacing:-.6px;color:var(--amber);line-height:1.1}
+.tca-v span{font-family:var(--sans);font-size:12px;font-weight:400;color:var(--ink-2);margin-left:5px;letter-spacing:0}
+.tca-s{font-size:11.5px;color:var(--ink-2);margin-top:4px;line-height:1.5}
+.tca.past .tca-s{color:var(--ink-3);margin-top:0}
+.guide{display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+  margin-top:11px;padding:9px 11px;border-radius:8px;
+  background:rgba(111,216,255,.10);border:1px solid rgba(111,216,255,.28);
+  font-size:12.5px;color:#BFEEFF}
+.guide .btn{min-height:28px;padding:0 10px;font-size:11.5px;margin-left:auto}
+
 /* 상세 */
 .dgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:7px;margin-top:10px}
 .cell{background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-sm);padding:7px 9px}
