@@ -179,6 +179,7 @@ src/60-ui.js           시트(목록 · 상세 · 설정)와 상태 표시
 src/80-app.js          상태 · 입력 · 메인 루프
 src/99-boot.js         시동
 src/_check.js          Node vm 으로 번들을 돌려 보는 개발용 점검
+src/_sky.mjs           가짜 카메라에 물릴 하늘 영상 생성 (개발용)
 build.py               → index.html (완전한 문서), fly.html (Artifact 용)
 ```
 
@@ -188,6 +189,19 @@ build.py               → index.html (완전한 문서), fly.html (Artifact 용
 ```
 node src/_check.js "console.log(Geo.elevation(Geo.nmToM(30), Geo.ftToM(35000)))"
 ```
+
+카메라 모드는 **실제 하늘을 배경에 깔아 봐야** HUD 가 읽히는지 알 수
+있습니다. Chromium 의 기본 가짜 카메라는 초록색 테스트 패턴이라 그
+판단이 되지 않습니다.
+
+```
+node src/_sky.mjs sky.y4m
+chromium --use-fake-device-for-media-stream --use-file-for-fake-video-capture=sky.y4m
+```
+
+이 방법으로 밝은 구름 위에서 상태 칩과 고각 눈금이 사라지는 걸 찾았습니다 —
+어두운 데모 배경에서는 멀쩡해 보이던 것들입니다. 그래서 HUD 의 선과 글자에는
+지도에서 쓰는 방식대로 어두운 테두리를 먼저 깔고 그 위에 그립니다.
 
 ---
 

@@ -66,6 +66,31 @@ var Render = (function () {
 
   /* ── 조각들 ───────────────────────────────────────────────── */
 
+  /* 밝은 하늘 위의 얇은 선과 작은 글자는 그냥 두면 사라진다.
+     지도에서 쓰는 방식대로 어두운 테두리를 먼저 깔고 그 위에 그린다. */
+  function haloText(g, txt, x, y, width) {
+    g.save();
+    g.lineJoin = 'round'; g.miterLimit = 2;
+    g.strokeStyle = 'rgba(3,9,7,.66)';
+    g.lineWidth = width || 2.6;
+    g.strokeText(txt, x, y);
+    g.restore();
+    g.fillText(txt, x, y);
+  }
+
+  /* 선을 두 번 긋는다 — 어두운 넓은 획 위에 원래 색.
+     테두리를 너무 굵게 두르면 어두운 하늘에서 전선처럼 보인다. */
+  function casedStroke(g, draw, width, color, cased) {
+    g.save();
+    g.lineCap = 'round';
+    g.strokeStyle = 'rgba(3,9,7,' + (cased == null ? 0.42 : cased) + ')';
+    g.lineWidth = width + 1.6;
+    draw(g);
+    g.strokeStyle = color; g.lineWidth = width;
+    draw(g);
+    g.restore();
+  }
+
   function roundRect(g, x, y, w, h, r) {
     g.beginPath();
     g.moveTo(x + r, y);
@@ -160,23 +185,26 @@ var Render = (function () {
         if (p.front && p.x > -W && p.x < W * 2 && p.y > -H && p.y < H * 2) any = true;
       }
       if (!any) continue;
-      g.strokeStyle = zero ? 'rgba(95,227,161,.5)' : 'rgba(95,227,161,.19)';
-      g.lineWidth = zero ? 1.6 : 1;
-      g.beginPath();
-      var started = false;
-      for (var k = 0; k < pts.length; k++) {
-        if (!pts[k].front) { started = false; continue; }
-        if (!started) { g.moveTo(pts[k].x, pts[k].y); started = true; }
-        else g.lineTo(pts[k].x, pts[k].y);
-      }
-      g.stroke();
+      var trace = function (gg) {
+        gg.beginPath();
+        var started = false;
+        for (var k = 0; k < pts.length; k++) {
+          if (!pts[k].front) { started = false; continue; }
+          if (!started) { gg.moveTo(pts[k].x, pts[k].y); started = true; }
+          else gg.lineTo(pts[k].x, pts[k].y);
+        }
+        gg.stroke();
+      };
+      casedStroke(g, trace, zero ? 1.5 : 0.9,
+                  zero ? 'rgba(120,240,180,.80)' : 'rgba(120,240,180,.34)',
+                  zero ? 0.45 : 0.30);
       if (!zero) {
         var lab = View.project(Geo.norm360(head), el);
         if (lab.front && lab.x > -40 && lab.x < W + 40 && lab.y > 0 && lab.y < H) {
-          g.font = '10px ' + FONT;
-          g.fillStyle = 'rgba(95,227,161,.55)';
+          g.font = '600 10px ' + FONT;
+          g.fillStyle = 'rgba(150,250,200,.95)';
           g.textAlign = 'left'; g.textBaseline = 'middle';
-          g.fillText((el > 0 ? '+' : '') + el + '°', lab.x + 8, lab.y);
+          haloText(g, (el > 0 ? '+' : '') + el + '°', lab.x + 8, lab.y);
         }
       }
     }
@@ -190,8 +218,9 @@ var Render = (function () {
     g.save();
     g.beginPath(); g.rect(0, y - 20, W, 34); g.clip();
 
-    g.strokeStyle = 'rgba(95,227,161,.20)'; g.lineWidth = 1;
-    g.beginPath(); g.moveTo(0, y + 11); g.lineTo(W, y + 11); g.stroke();
+    casedStroke(g, function (gg) {
+      gg.beginPath(); gg.moveTo(0, y + 11); gg.lineTo(W, y + 11); gg.stroke();
+    }, 0.9, 'rgba(120,240,180,.30)', 0.28);
 
     var start = Math.ceil((head - half - 5) / 5) * 5;
     for (var a = start; a <= head + half + 5; a += 5) {
@@ -201,17 +230,17 @@ var Render = (function () {
       if (x < -30 || x > W + 30) continue;
       var az = Geo.norm360(a);
       var major = az % 45 === 0, mid = az % 15 === 0;
-      g.strokeStyle = major ? 'rgba(95,227,161,.8)' : 'rgba(95,227,161,.34)';
-      g.lineWidth = major ? 1.6 : 1;
-      g.beginPath();
-      g.moveTo(x, y + 11); g.lineTo(x, y + 11 - (major ? 10 : mid ? 6 : 3.5));
-      g.stroke();
+      var len = major ? 10 : mid ? 6 : 3.5;
+      casedStroke(g, function (gg) {
+        gg.beginPath(); gg.moveTo(x, y + 11); gg.lineTo(x, y + 11 - len); gg.stroke();
+      }, major ? 1.5 : 0.9, major ? 'rgba(140,245,190,.95)' : 'rgba(120,240,180,.55)',
+         major ? 0.45 : 0.28);
       if (major) {
-        g.font = '600 11px ' + FONT;
-        g.fillStyle = absolute ? '#5FE3A1' : 'rgba(255,194,75,.9)';
+        g.font = '700 11px ' + FONT;
+        g.fillStyle = absolute ? '#6FEDAE' : '#FFC24B';
         g.textAlign = 'center'; g.textBaseline = 'bottom';
         var nm = ['N', '045', 'E', '135', 'S', '225', 'W', '315'][az / 45];
-        g.fillText(nm, x, y + 0);
+        haloText(g, nm, x, y + 0);
       }
     }
     g.restore();
@@ -227,13 +256,14 @@ var Render = (function () {
     g.fillText(txt, cxp, y + 22.5);
 
     /* 중앙 조준선 */
-    g.strokeStyle = 'rgba(95,227,161,.45)'; g.lineWidth = 1.4;
-    g.beginPath();
-    g.moveTo(cxp - 13, H / 2); g.lineTo(cxp - 5, H / 2);
-    g.moveTo(cxp + 5, H / 2); g.lineTo(cxp + 13, H / 2);
-    g.moveTo(cxp, H / 2 - 13); g.lineTo(cxp, H / 2 - 5);
-    g.moveTo(cxp, H / 2 + 5); g.lineTo(cxp, H / 2 + 13);
-    g.stroke();
+    casedStroke(g, function (gg) {
+      gg.beginPath();
+      gg.moveTo(cxp - 13, H / 2); gg.lineTo(cxp - 5, H / 2);
+      gg.moveTo(cxp + 5, H / 2); gg.lineTo(cxp + 13, H / 2);
+      gg.moveTo(cxp, H / 2 - 13); gg.lineTo(cxp, H / 2 - 5);
+      gg.moveTo(cxp, H / 2 + 5); gg.lineTo(cxp, H / 2 + 13);
+      gg.stroke();
+    }, 1.4, 'rgba(140,245,190,.85)', 0.45);
   }
 
   /* 라벨 겹침 회피 — 가까운 것부터 자리를 잡고 늦게 온 것을 아래로 민다 */
@@ -319,16 +349,18 @@ var Render = (function () {
     if (fc.length > 1) {
       g.save();
       g.setLineDash([4, 5]);
-      g.strokeStyle = 'rgba(111,216,255,.55)';
-      g.lineWidth = 1.4;
-      g.beginPath();
-      var started = false;
-      for (var j = 0; j < fc.length; j++) {
-        var q = View.project(fc[j].az, fc[j].el);
-        if (!q.front) { started = false; continue; }
-        if (!started) { g.moveTo(q.x, q.y); started = true; } else g.lineTo(q.x, q.y);
-      }
-      g.stroke();
+      var tracePred = function (gg) {
+        gg.beginPath();
+        var started = false;
+        for (var j = 0; j < fc.length; j++) {
+          var q = View.project(fc[j].az, fc[j].el);
+          if (!q.front) { started = false; continue; }
+          if (!started) { gg.moveTo(q.x, q.y); started = true; } else gg.lineTo(q.x, q.y);
+        }
+        gg.stroke();
+      };
+      g.strokeStyle = 'rgba(3,9,7,.38)'; g.lineWidth = 3.1; tracePred(g);
+      g.strokeStyle = 'rgba(150,225,255,.9)'; g.lineWidth = 1.5; tracePred(g);
       g.restore();
 
       var p0 = View.project(fc[0].az, fc[0].el);
@@ -348,10 +380,10 @@ var Render = (function () {
         lastX = t.x; lastY = t.y;
         g.fillStyle = 'rgba(111,216,255,.7)';
         g.beginPath(); g.arc(t.x, t.y, 2.6, 0, 6.2832); g.fill();
-        g.font = '9px ' + FONT;
-        g.fillStyle = 'rgba(191,238,255,.8)';
+        g.font = '600 9px ' + FONT;
+        g.fillStyle = '#BFEEFF';
         g.textAlign = 'center'; g.textBaseline = 'top';
-        g.fillText(Math.round(fc[m].t / 60) + '분', t.x, t.y + 6);
+        haloText(g, Math.round(fc[m].t / 60) + '분', t.x, t.y + 6);
       }
     }
 
