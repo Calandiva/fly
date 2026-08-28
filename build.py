@@ -7,7 +7,7 @@
 카메라와 방향 센서는 https 또는 localhost 에서만 동작한다. file:// 로 열면
 데모 모드와 드래그 둘러보기까지만 확인할 수 있다.
 """
-import io, os, sys
+import io, os, sys, subprocess, datetime
 
 SRC = 'src'
 JS = ['20-geo.js', '25-catalog.js', '30-orient.js', '32-sensors.js',
@@ -26,10 +26,26 @@ def wr(path, text):
     io.open(path, 'w', encoding='utf-8', newline='\n').write(text)
 
 
+def build_stamp():
+    """배포된 것이 어느 빌드인지 화면에서 보이게 하려고 박아 넣는다."""
+    when = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+    try:
+        sha = subprocess.check_output(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            stderr=subprocess.DEVNULL).decode().strip()
+        dirty = subprocess.check_output(
+            ['git', 'status', '--porcelain'],
+            stderr=subprocess.DEVNULL).decode().strip()
+        return when + ' ' + sha + ('+' if dirty else '')
+    except Exception:
+        return when
+
+
 def main():
     head = rd('00-head.htmlpart')
     body = rd('10-body.htmlpart')
     js = '\n'.join(rd(n) for n in JS)
+    js = js.replace('__BUILD__', build_stamp())
 
     wr('fly.bundle.js', js)
 

@@ -247,6 +247,9 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border:3px solid #061
   background:var(--ink-3);transition:.16s}
 .sw input:checked + i{background:rgba(95,227,161,.24);border-color:var(--line-2)}
 .sw input:checked + i::after{transform:translateX(18px);background:var(--hud)}
+.build{margin-top:14px;padding:7px 10px;border-radius:6px;background:var(--panel-2);
+  border:1px solid var(--line);font-family:var(--mono);font-size:10.5px;
+  color:var(--ink-2);letter-spacing:.02em;text-align:center}
 .sechead{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
   color:var(--ink-3);margin:14px 0 2px}
 .sechead:first-child{margin-top:0}
@@ -3295,6 +3298,7 @@ var UI = (function () {
         '<input type="text" id="setUrl" class="mono" placeholder="https://…/{lat}/{lon}/{nm}" ' +
         'value="' + esc(Source.getCustom().url) + '">', 'col') +
 
+      '<div class="build">빌드 ' + esc(App.BUILD) + '</div>' +
       '<div style="margin-top:16px;font-size:11px;color:var(--ink-3);line-height:1.65">' +
       '위치와 카메라 영상은 이 기기 밖으로 나가지 않습니다. 서버에는 조회할 좌표 범위만 보냅니다. ' +
       '항공기 위치는 공개 ADS-B 수신망에서 오며 수 초의 지연과 누락이 있습니다. 항행이나 관제 목적으로 쓸 수 없습니다.</div>';
@@ -3436,6 +3440,10 @@ var UI = (function () {
 
 var App = (function () {
   var KEY = 'fly.cfg.v1';
+
+  /* 빌드 표시 — build.py 가 채워 넣는다. 배포된 것이 어느 빌드인지
+     화면에서 바로 확인할 수 있어야 "올리긴 했나" 를 두고 헤매지 않는다. */
+  var BUILD = '2026-08-28 09:47 ec7a567+';
 
   var cfg = {
     metric: true,
@@ -3883,7 +3891,7 @@ var App = (function () {
     resume();
   }
 
-  return { state: state, cfg: cfg, boot: boot, start: start, select: select,
+  return { BUILD: BUILD, state: state, cfg: cfg, boot: boot, start: start, select: select,
            save: save, setCamera: setCamera, setWake: setWake, primeAudio: primeAudio,
            useUrl: useUrl,
            capture: capture, lookAt: lookAt, pause: pause, resume: resume };

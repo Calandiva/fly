@@ -4,6 +4,10 @@
 var App = (function () {
   var KEY = 'fly.cfg.v1';
 
+  /* 빌드 표시 — build.py 가 채워 넣는다. 배포된 것이 어느 빌드인지
+     화면에서 바로 확인할 수 있어야 "올리긴 했나" 를 두고 헤매지 않는다. */
+  var BUILD = '__BUILD__';
+
   var cfg = {
     metric: true,
     camera: true,
@@ -450,7 +454,7 @@ var App = (function () {
     resume();
   }
 
-  return { state: state, cfg: cfg, boot: boot, start: start, select: select,
+  return { BUILD: BUILD, state: state, cfg: cfg, boot: boot, start: start, select: select,
            save: save, setCamera: setCamera, setWake: setWake, primeAudio: primeAudio,
            useUrl: useUrl,
            capture: capture, lookAt: lookAt, pause: pause, resume: resume };

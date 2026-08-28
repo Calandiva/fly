@@ -373,6 +373,7 @@ var UI = (function () {
         '<input type="text" id="setUrl" class="mono" placeholder="https://…/{lat}/{lon}/{nm}" ' +
         'value="' + esc(Source.getCustom().url) + '">', 'col') +
 
+      '<div class="build">빌드 ' + esc(App.BUILD) + '</div>' +
       '<div style="margin-top:16px;font-size:11px;color:var(--ink-3);line-height:1.65">' +
       '위치와 카메라 영상은 이 기기 밖으로 나가지 않습니다. 서버에는 조회할 좌표 범위만 보냅니다. ' +
       '항공기 위치는 공개 ADS-B 수신망에서 오며 수 초의 지연과 누락이 있습니다. 항행이나 관제 목적으로 쓸 수 없습니다.</div>';
