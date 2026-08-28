@@ -367,6 +367,11 @@ var App = (function () {
       gy = null;
     });
 
+    /* CSP 가 막은 요청을 기록해 둔다 — 나중에 CORS 실패와 갈라내는 단서가 된다 */
+    document.addEventListener('securitypolicyviolation', function (e) {
+      Source.noteCsp(e.blockedURI || e.violatedDirective || '');
+    });
+
     window.addEventListener('resize', function () { Render.resize(); });
     if (window.visualViewport) window.visualViewport.addEventListener('resize', function () { Render.resize(); });
     document.addEventListener('visibilitychange', function () {

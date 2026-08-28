@@ -355,6 +355,9 @@ var UI = (function () {
         (Route.state.off ? ' — 연속 실패로 중단됨' : Route.state.hits ? ' — ' + Route.state.hits + '건 확인' : ''),
         sw('setRoute', c.route)) +
       row('데모 모드', '실제 수신 대신 가상의 항공기를 띄웁니다', sw('setDemo', c.demo)) +
+      row('연결 점검', '공급자를 하나씩 찔러 보고 무엇이 막는지 알려 줍니다',
+        '<button class="btn" id="bDiag">점검</button>') +
+      '<div id="diagOut"></div>' +
 
       '<div style="margin-top:16px;font-size:11px;color:var(--ink-3);line-height:1.65">' +
       '위치와 카메라 영상은 이 기기 밖으로 나가지 않습니다. 서버에는 조회할 좌표 범위만 보냅니다. ' +
@@ -408,6 +411,78 @@ var UI = (function () {
     rng('setIval', ' 초', function (v) { c.intervalMs = v * 1000; Source.setInterval(v * 1000); App.save(); });
     var p = document.getElementById('setProv');
     if (p) p.onchange = function () { Source.setProvider(parseInt(p.value, 10)); App.save(); };
+
+    var dg = document.getElementById('bDiag');
+    if (dg) dg.onclick = function () { runDiag(dg); };
+  }
+
+  /* ── 연결 점검 ────────────────────────────────────────────── */
+  function runDiag(btn) {
+    var out = document.getElementById('diagOut');
+    if (!out) return;
+    btn.disabled = true;
+    btn.textContent = '점검 중…';
+    out.innerHTML = '<div class="diag"><div class="diag-w">공급자에 차례로 요청하는 중입니다…</div></div>';
+
+    Source.diagnose().then(function (d) {
+      btn.disabled = false;
+      btn.textContent = '다시 점검';
+
+      var alive = d.providers.filter(function (r) { return r.ok; });
+      var head = alive.length
+        ? '<b class="good">' + alive.length + '곳 정상</b> — 설정에서 그 공급자를 고르면 바로 받습니다.'
+        : '<b class="bad">모든 공급자에 닿지 못했습니다.</b>';
+
+      var cur = Source.PROVIDERS[Source.state.provider].name;
+      var rows = d.providers.map(function (r, i) {
+        var isCur = r.name === cur;
+        return '<div class="diag-r">' +
+          '<i class="' + (r.ok ? 'good' : 'bad') + '">' + (r.ok ? '정상' : esc(r.t)) + '</i>' +
+          '<b>' + esc(r.name) + (isCur ? ' <s>사용 중</s>' : '') + '</b>' +
+          '<u>' + (r.ok ? r.n + '대 · ' + r.ms + 'ms' : r.ms + 'ms') + '</u>' +
+          (r.ok
+            ? (isCur ? '' : '<em><button class="btn sm" data-use="' + i + '">이 공급자 쓰기</button></em>')
+            : '<em>' + esc(r.hint) + '</em>') +
+        '</div>';
+      }).join('');
+
+      var e = d.env;
+      var env = [
+        '주소 ' + esc(e.origin),
+        e.secure ? '보안 컨텍스트' : '비보안 컨텍스트 (카메라·센서 불가)',
+        e.online ? '온라인' : '오프라인'
+      ].join(' · ');
+      var csp = e.csp.length
+        ? '<div class="diag-w">이 페이지의 보안 정책이 막은 주소: ' + esc(e.csp.join(', ')) +
+          '<br>Artifact 처럼 외부 요청을 막는 곳에서는 실제 수신이 되지 않습니다 — 데모 모드로만 볼 수 있습니다.</div>'
+        : '';
+
+      out.innerHTML = '<div class="diag">' +
+        '<div class="diag-h">' + head + '</div>' + rows + csp +
+        '<div class="diag-e">' + env + '</div></div>';
+
+      /* 살아 있는 곳을 찾았으면 바로 갈아탈 수 있게 한다 */
+      out.onclick = function (ev) {
+        var t = ev.target.closest('[data-use]');
+        if (!t) return;
+        var r = d.providers[parseInt(t.dataset.use, 10)];
+        var idx = -1;
+        for (var i = 0; i < Source.PROVIDERS.length; i++) {
+          if (Source.PROVIDERS[i].name === r.name) { idx = i; break; }
+        }
+        if (idx < 0) return;
+        if (App.cfg.demo) { App.cfg.demo = false; Source.setDemo(false); }
+        Source.setProvider(idx);
+        App.save();
+        toast(r.name + ' 으로 바꿨습니다');
+        paint(App.state, true);
+      };
+    }).catch(function (err) {
+      btn.disabled = false;
+      btn.textContent = '다시 점검';
+      out.innerHTML = '<div class="diag"><div class="diag-w">점검을 마치지 못했습니다: ' +
+                      esc((err && err.message) || '') + '</div></div>';
+    });
   }
 
   return { init: init, toast: toast, status: status, open: open, close: close,

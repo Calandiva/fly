@@ -33,6 +33,20 @@ var Source = (function () {
     tIngest: 0, tSolved: 0
   };
 
+  /* 페이지 보안 정책(CSP)이 막은 주소. "수신 실패" 가 CORS 인지 CSP 인지
+     구분하려면 이 기록이 필요하다 — fetch 는 둘 다 똑같이 TypeError 를 낸다. */
+  var cspHits = [];
+  function noteCsp(uri) {
+    if (uri && cspHits.indexOf(uri) < 0 && cspHits.length < 20) cspHits.push(uri);
+  }
+  function cspBlocked(url) {
+    var host = String(url).replace(/^https?:\/\//, '').split('/')[0];
+    for (var i = 0; i < cspHits.length; i++) {
+      if (String(cspHits[i]).indexOf(host) >= 0) return true;
+    }
+    return false;
+  }
+
   var fleet = Object.create(null);     // id → 항공기
   var subs = [];
   var timer = null, ctl = null;
@@ -306,11 +320,95 @@ var Source = (function () {
     return out;
   }
 
+  /* ── 연결 점검 ────────────────────────────────────────────
+     "네트워크 실패" 로 뭉뚱그리면 손쓸 데가 없다. 공급자를 하나씩 찔러
+     보고 무엇이 막았는지 갈라 준다. 브라우저는 CORS 거부·CSP 차단·주소
+     없음을 모두 같은 TypeError 로 주므로 곁의 단서로 구분한다. */
+  function why(e, url) {
+    if (e && e.name === 'AbortError') return { t: '시간 초과', hint: '10초 안에 응답이 없었습니다' };
+    var m = String((e && e.message) || '');
+    var http = m.match(/HTTP (\d+)/);
+    if (http) {
+      var c = http[1];
+      if (c === '429') return { t: 'HTTP 429', hint: '요청이 너무 잦습니다 — 갱신 주기를 늘리세요' };
+      if (c === '404') return { t: 'HTTP 404', hint: '이 주소가 더는 없습니다 — 공급자 API 가 바뀐 것입니다' };
+      if (c === '401' || c === '403') return { t: 'HTTP ' + c, hint: '인증이나 API 키를 요구합니다' };
+      if (c[0] === '5') return { t: 'HTTP ' + c, hint: '공급자 서버 쪽 오류입니다' };
+      return { t: 'HTTP ' + c, hint: '' };
+    }
+    if (cspBlocked(url)) {
+      return { t: 'CSP 차단', hint: '이 페이지의 보안 정책이 외부 요청을 막습니다. ' +
+                                    'Artifact 처럼 정책이 엄격한 곳에서는 동작하지 않습니다' };
+    }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return { t: '오프라인', hint: '기기가 네트워크에 연결되어 있지 않습니다' };
+    }
+    if (/Failed to fetch|NetworkError|Load failed/i.test(m)) {
+      return { t: '연결 실패', hint: '서버에 닿지 못했습니다 — CORS 거부, 없어진 주소, 또는 차단' };
+    }
+    return { t: '실패', hint: m || '알 수 없는 오류' };
+  }
+
+  function probe(name, url, parse) {
+    var t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var to = setTimeout(function () { if (ctl) try { ctl.abort(); } catch (e) {} }, 10000);
+    var ms = function () {
+      return Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0);
+    };
+    return fetch(url, { signal: ctl ? ctl.signal : undefined, cache: 'no-store',
+                        headers: { 'Accept': 'application/json' } })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (json) {
+        clearTimeout(to);
+        return { name: name, url: url, ok: true, ms: ms(), n: parse ? parse(json) : null };
+      })
+      .catch(function (e) {
+        clearTimeout(to);
+        var w = why(e, url);
+        return { name: name, url: url, ok: false, ms: ms(), t: w.t, hint: w.hint };
+      });
+  }
+
+  function diagnose() {
+    var p = Position.state;
+    var lat = p.ok ? p.lat : 37.5665, lon = p.ok ? p.lon : 126.9780;
+    var out = [];
+    var chain = Promise.resolve();
+
+    PROVIDERS.forEach(function (prov) {
+      chain = chain.then(function () {
+        var nm = Math.min(prov.max, 50);
+        return probe(prov.name, prov.url(lat, lon, nm), function (json) {
+          return (prov.kind === 'opensky' ? normOpenSky(json, Date.now())
+                                          : normReadsb(json, Date.now())).length;
+        }).then(function (r) { out.push(r); });
+      });
+    });
+
+    return chain.then(function () {
+      return {
+        env: {
+          origin: (typeof location !== 'undefined') ? location.origin : '—',
+          protocol: (typeof location !== 'undefined') ? location.protocol : '—',
+          online: (typeof navigator !== 'undefined') ? navigator.onLine !== false : true,
+          secure: (typeof window !== 'undefined') ? !!window.isSecureContext : false,
+          csp: cspHits.slice(0, 6)
+        },
+        providers: out
+      };
+    });
+  }
+
   return {
     state: st, fleet: fleet, cfg: cfg, PROVIDERS: PROVIDERS,
     on: on, start: start, stop: stop, fetchOnce: fetchOnce, advance: advance,
     setDemo: setDemo, setProvider: setProvider, setRadius: setRadius,
     setInterval: setInterval_,
-    _ingest: ingest, _normReadsb: normReadsb, _normOpenSky: normOpenSky
+    diagnose: diagnose, noteCsp: noteCsp, probe: probe,
+    _ingest: ingest, _normReadsb: normReadsb, _normOpenSky: normOpenSky, _why: why
   };
 })();
