@@ -8,7 +8,12 @@
 'use strict';
 
 var Route = (function () {
-  var URL = 'https://api.adsb.lol/api/0/routeset';
+  /* 이 배포본에 중계 함수가 있으면 그쪽으로 보낸다. 없으면(404) 상류로 되돌린다.
+     adsb.lol 의 routeset 은 CORS 를 열어 주므로 직접 불러도 되긴 한다. */
+  var SELF = '/api/route';
+  var UPSTREAM = 'https://api.adsb.lol/api/0/routeset';
+  var URL = SELF;
+  var fellBack = false;
   var BATCH = 60;             // 한 번에 물어볼 편명 수
   var MIN_GAP = 20000;        // 조회 간격
   var GIVE_UP = 3;            // 연속 실패 허용 횟수
@@ -127,6 +132,11 @@ var Route = (function () {
     }).catch(function (e) {
       clearTimeout(to);
       want.forEach(function (w) { delete pending[w.callsign]; });
+      /* 중계 함수가 없는 정적 호스팅이면 한 번만 상류로 되돌린다 */
+      if (!fellBack && URL === SELF) {
+        fellBack = true; URL = UPSTREAM; st.last = 0;
+        return;
+      }
       st.fails++;
       st.err = (e && e.message) || '항로 조회 실패';
       if (st.fails >= GIVE_UP) st.off = true;     // 조용히 물러난다

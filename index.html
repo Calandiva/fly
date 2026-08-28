@@ -1421,6 +1421,12 @@ var Source = (function () {
   /* 공급자 = 후보 주소 하나. 어느 것이 지금 살아 있는지는 네트워크가 있는
      기기에서만 알 수 있으므로 목록으로 두고 앱이 직접 찾아 쓰게 한다. */
   var PROVIDERS = [
+    /* 같은 출처 중계를 먼저 본다. 공개 ADS-B API 는 대부분 CORS 헤더를 주지
+       않아 브라우저에서 직접 부르면 막힌다 — 주소가 틀려서가 아니라 구조가
+       그렇다. 이 배포본에 api/adsb 함수가 있으면 그쪽이 정답이다.
+       (정적 호스팅이면 404 가 나고 아래 주소들로 넘어간다.) */
+    { id: 'self',      name: '이 사이트 중계', note: 'api/adsb',  kind: 'readsb',  max: 250,
+      tpl: '/api/adsb?lat={lat}&lon={lon}&nm={nm}' },
     { id: 'lol-lat',   name: 'adsb.lol',       note: 'v2/lat',    kind: 'readsb',  max: 250,
       tpl: 'https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{nm}' },
     { id: 'lol-point', name: 'adsb.lol',       note: 'v2/point',  kind: 'readsb',  max: 250,
@@ -1449,7 +1455,10 @@ var Source = (function () {
 
   var CANDIDATES = PROVIDERS.filter(function (pv) { return !pv.custom; })
     .map(function (pv) {
-      return { host: pv.name + ' · ' + pv.note, kind: pv.kind, tpl: pv.tpl, id: pv.id };
+      /* 도달 확인은 절대 주소일 때만 뜻이 있으므로 호스트를 따로 뽑아 둔다 */
+      var m = String(pv.tpl).match(/^https:\/\/([^/]+)/);
+      return { host: m ? m[1] : pv.label, kind: pv.kind, tpl: pv.tpl, id: pv.id,
+               label: pv.label };
     });
 
   var st = {
@@ -1850,6 +1859,7 @@ var Source = (function () {
      를 가를 수 있다 — 일반 fetch 는 둘 다 똑같은 TypeError 를 준다. */
   function reach(host) {
     if (typeof fetch !== 'function') return Promise.resolve(null);
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host)) return Promise.resolve(null);   // 같은 출처 경로
     var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     var to = setTimeout(function () { if (ctl) try { ctl.abort(); } catch (e) {} }, 8000);
     return fetch('https://' + host + '/', {
@@ -1946,7 +1956,12 @@ var Source = (function () {
 'use strict';
 
 var Route = (function () {
-  var URL = 'https://api.adsb.lol/api/0/routeset';
+  /* 이 배포본에 중계 함수가 있으면 그쪽으로 보낸다. 없으면(404) 상류로 되돌린다.
+     adsb.lol 의 routeset 은 CORS 를 열어 주므로 직접 불러도 되긴 한다. */
+  var SELF = '/api/route';
+  var UPSTREAM = 'https://api.adsb.lol/api/0/routeset';
+  var URL = SELF;
+  var fellBack = false;
   var BATCH = 60;             // 한 번에 물어볼 편명 수
   var MIN_GAP = 20000;        // 조회 간격
   var GIVE_UP = 3;            // 연속 실패 허용 횟수
@@ -2065,6 +2080,11 @@ var Route = (function () {
     }).catch(function (e) {
       clearTimeout(to);
       want.forEach(function (w) { delete pending[w.callsign]; });
+      /* 중계 함수가 없는 정적 호스팅이면 한 번만 상류로 되돌린다 */
+      if (!fellBack && URL === SELF) {
+        fellBack = true; URL = UPSTREAM; st.last = 0;
+        return;
+      }
       st.fails++;
       st.err = (e && e.message) || '항로 조회 실패';
       if (st.fails >= GIVE_UP) st.off = true;     // 조용히 물러난다
@@ -3388,7 +3408,8 @@ var UI = (function () {
       var curTpl = Source.getCustom().url;
       var rows = d.providers.map(function (r, i) {
         var isCur = r.tpl === curTpl && Source.state.provider === Source.customIndex();
-        var short = r.tpl.replace(/^https?:\/\//, '');
+        var short = r.tpl.indexOf('/') === 0 ? '이 사이트 · ' + r.tpl.split('?')[0]
+                                              : r.tpl.replace(/^https?:\/\//, '');
         return '<div class="diag-r">' +
           '<i class="' + (r.ok ? 'good' : 'bad') + '">' + (r.ok ? '정상' : esc(r.t)) + '</i>' +
           '<b>' + esc(short) + (isCur ? ' <s>사용 중</s>' : '') + '</b>' +
@@ -3443,7 +3464,7 @@ var App = (function () {
 
   /* 빌드 표시 — build.py 가 채워 넣는다. 배포된 것이 어느 빌드인지
      화면에서 바로 확인할 수 있어야 "올리긴 했나" 를 두고 헤매지 않는다. */
-  var BUILD = '2026-08-28 09:47 ec7a567+';
+  var BUILD = '2026-08-28 09:56 74bbb4a+';
 
   var cfg = {
     metric: true,

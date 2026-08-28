@@ -36,6 +36,12 @@ var Source = (function () {
   /* 공급자 = 후보 주소 하나. 어느 것이 지금 살아 있는지는 네트워크가 있는
      기기에서만 알 수 있으므로 목록으로 두고 앱이 직접 찾아 쓰게 한다. */
   var PROVIDERS = [
+    /* 같은 출처 중계를 먼저 본다. 공개 ADS-B API 는 대부분 CORS 헤더를 주지
+       않아 브라우저에서 직접 부르면 막힌다 — 주소가 틀려서가 아니라 구조가
+       그렇다. 이 배포본에 api/adsb 함수가 있으면 그쪽이 정답이다.
+       (정적 호스팅이면 404 가 나고 아래 주소들로 넘어간다.) */
+    { id: 'self',      name: '이 사이트 중계', note: 'api/adsb',  kind: 'readsb',  max: 250,
+      tpl: '/api/adsb?lat={lat}&lon={lon}&nm={nm}' },
     { id: 'lol-lat',   name: 'adsb.lol',       note: 'v2/lat',    kind: 'readsb',  max: 250,
       tpl: 'https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{nm}' },
     { id: 'lol-point', name: 'adsb.lol',       note: 'v2/point',  kind: 'readsb',  max: 250,
@@ -64,7 +70,10 @@ var Source = (function () {
 
   var CANDIDATES = PROVIDERS.filter(function (pv) { return !pv.custom; })
     .map(function (pv) {
-      return { host: pv.name + ' · ' + pv.note, kind: pv.kind, tpl: pv.tpl, id: pv.id };
+      /* 도달 확인은 절대 주소일 때만 뜻이 있으므로 호스트를 따로 뽑아 둔다 */
+      var m = String(pv.tpl).match(/^https:\/\/([^/]+)/);
+      return { host: m ? m[1] : pv.label, kind: pv.kind, tpl: pv.tpl, id: pv.id,
+               label: pv.label };
     });
 
   var st = {
@@ -465,6 +474,7 @@ var Source = (function () {
      를 가를 수 있다 — 일반 fetch 는 둘 다 똑같은 TypeError 를 준다. */
   function reach(host) {
     if (typeof fetch !== 'function') return Promise.resolve(null);
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host)) return Promise.resolve(null);   // 같은 출처 경로
     var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     var to = setTimeout(function () { if (ctl) try { ctl.abort(); } catch (e) {} }, 8000);
     return fetch('https://' + host + '/', {

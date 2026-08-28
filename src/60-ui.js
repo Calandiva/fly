@@ -463,7 +463,8 @@ var UI = (function () {
       var curTpl = Source.getCustom().url;
       var rows = d.providers.map(function (r, i) {
         var isCur = r.tpl === curTpl && Source.state.provider === Source.customIndex();
-        var short = r.tpl.replace(/^https?:\/\//, '');
+        var short = r.tpl.indexOf('/') === 0 ? '이 사이트 · ' + r.tpl.split('?')[0]
+                                              : r.tpl.replace(/^https?:\/\//, '');
         return '<div class="diag-r">' +
           '<i class="' + (r.ok ? 'good' : 'bad') + '">' + (r.ok ? '정상' : esc(r.t)) + '</i>' +
           '<b>' + esc(short) + (isCur ? ' <s>사용 중</s>' : '') + '</b>' +
