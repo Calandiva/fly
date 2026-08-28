@@ -8,7 +8,22 @@
 var Source = (function () {
 
   /* ── 공급자 ────────────────────────────────────────────────
-     앞의 것부터 시도하고, 실패하면 다음으로 넘어가 그 자리를 기억한다. */
+     앞의 것부터 시도하고, 실패하면 다음으로 넘어가 그 자리를 기억한다.
+
+     공개 ADS-B API 는 주소와 정책이 자주 바뀐다. 여기 적힌 주소가 언제까지
+     살아 있을지 보장할 수 없으므로, 연결 점검이 아래 CANDIDATES 를 실제로
+     찔러 보고 되는 것을 골라 쓰게 해 둔다. 마지막 수단으로 직접 주소를
+     넣을 수도 있다. */
+  var custom = { url: '', kind: 'readsb' };
+
+  function fillUrl(tpl, la, lo, nm) {
+    return String(tpl)
+      .replace(/\{lat\}/g, la.toFixed(4))
+      .replace(/\{lon\}/g, lo.toFixed(4))
+      .replace(/\{nm\}/g, String(nm))
+      .replace(/\{km\}/g, String(Math.round(nm * 1.852)));
+  }
+
   var PROVIDERS = [
     { id: 'adsb.lol', name: 'adsb.lol', kind: 'readsb', max: 250,
       url: function (la, lo, nm) { return 'https://api.adsb.lol/v2/lat/' + la.toFixed(4) + '/lon/' + lo.toFixed(4) + '/dist/' + nm; } },
@@ -22,7 +37,30 @@ var Source = (function () {
         return 'https://opensky-network.org/api/states/all?lamin=' + (la - b.dLat).toFixed(4) +
                '&lomin=' + (lo - b.dLon).toFixed(4) + '&lamax=' + (la + b.dLat).toFixed(4) +
                '&lomax=' + (lo + b.dLon).toFixed(4);
-      } }
+      } },
+    { id: 'custom', name: '직접 지정', kind: 'readsb', max: 250, custom: true,
+      url: function (la, lo, nm) { return fillUrl(custom.url, la, lo, nm); } }
+  ];
+
+  /* 연결 점검이 찔러 볼 후보들. 어느 것이 살아 있는지는 네트워크가 있는
+     기기에서만 알 수 있으므로, 판정을 코드에 박지 않고 실제로 물어본다. */
+  var CANDIDATES = [
+    { host: 'api.adsb.lol', kind: 'readsb',
+      tpl: 'https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{nm}' },
+    { host: 'api.adsb.lol', kind: 'readsb',
+      tpl: 'https://api.adsb.lol/v2/point/{lat}/{lon}/{nm}' },
+    { host: 'api.adsb.lol', kind: 'readsb',
+      tpl: 'https://api.adsb.lol/api/0/lat/{lat}/lon/{lon}/dist/{nm}' },
+    { host: 'opendata.adsb.fi', kind: 'readsb',
+      tpl: 'https://opendata.adsb.fi/api/v2/lat/{lat}/lon/{lon}/dist/{nm}' },
+    { host: 'api.adsb.fi', kind: 'readsb',
+      tpl: 'https://api.adsb.fi/v2/lat/{lat}/lon/{lon}/dist/{nm}' },
+    { host: 'api.airplanes.live', kind: 'readsb',
+      tpl: 'https://api.airplanes.live/v2/point/{lat}/{lon}/{nm}' },
+    { host: 'rest.airplanes.live', kind: 'readsb',
+      tpl: 'https://rest.airplanes.live/point/{lat}/{lon}/{nm}' },
+    { host: 'opensky-network.org', kind: 'opensky',
+      tpl: 'https://opensky-network.org/api/states/all?lamin={lamin}&lomin={lomin}&lamax={lamax}&lomax={lomax}' }
   ];
 
   var st = {
@@ -255,6 +293,20 @@ var Source = (function () {
     start();
   }
 
+  /* 직접 지정 주소. {lat} {lon} {nm} 자리를 채워 쓴다. */
+  function setCustom(tpl, kind) {
+    custom.url = String(tpl || '').trim();
+    custom.kind = kind === 'opensky' ? 'opensky' : 'readsb';
+    for (var i = 0; i < PROVIDERS.length; i++) {
+      if (PROVIDERS[i].custom) PROVIDERS[i].kind = custom.kind;
+    }
+  }
+  function getCustom() { return { url: custom.url, kind: custom.kind }; }
+  function customIndex() {
+    for (var i = 0; i < PROVIDERS.length; i++) if (PROVIDERS[i].custom) return i;
+    return -1;
+  }
+
   function setProvider(i) {
     st.provider = ((i % PROVIDERS.length) + PROVIDERS.length) % PROVIDERS.length;
     st.providerName = PROVIDERS[st.provider].name;
@@ -373,23 +425,73 @@ var Source = (function () {
       });
   }
 
+  /* 호스트가 살아 있기는 한가.
+     no-cors 요청은 응답 내용을 못 읽는 대신, 서버가 무엇이든 답하기만 하면
+     성공한다. 이걸로 "주소가 없어졌다" 와 "서버는 있는데 CORS 를 거부한다"
+     를 가를 수 있다 — 일반 fetch 는 둘 다 똑같은 TypeError 를 준다. */
+  function reach(host) {
+    if (typeof fetch !== 'function') return Promise.resolve(null);
+    var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var to = setTimeout(function () { if (ctl) try { ctl.abort(); } catch (e) {} }, 8000);
+    return fetch('https://' + host + '/', {
+      mode: 'no-cors', cache: 'no-store',
+      signal: ctl ? ctl.signal : undefined
+    }).then(function () { clearTimeout(to); return true; })
+      .catch(function () { clearTimeout(to); return false; });
+  }
+
   function diagnose() {
     var p = Position.state;
     var lat = p.ok ? p.lat : 37.5665, lon = p.ok ? p.lon : 126.9780;
-    var out = [];
-    var chain = Promise.resolve();
+    var nm = 50;
+    var b = Geo.degBox(lat, Geo.nmToM(nm));
+    var box = {
+      lamin: (lat - b.dLat).toFixed(4), lamax: (lat + b.dLat).toFixed(4),
+      lomin: (lon - b.dLon).toFixed(4), lomax: (lon + b.dLon).toFixed(4)
+    };
 
-    PROVIDERS.forEach(function (prov) {
+    var list = CANDIDATES.slice();
+    if (custom.url) list.push({ host: '직접 지정', kind: custom.kind, tpl: custom.url, mine: true });
+
+    var out = [], hosts = {}, chain = Promise.resolve();
+
+    list.forEach(function (cand) {
       chain = chain.then(function () {
-        var nm = Math.min(prov.max, 50);
-        return probe(prov.name, prov.url(lat, lon, nm), function (json) {
-          return (prov.kind === 'opensky' ? normOpenSky(json, Date.now())
+        var url = fillUrl(cand.tpl, lat, lon, nm)
+          .replace(/\{lamin\}/g, box.lamin).replace(/\{lamax\}/g, box.lamax)
+          .replace(/\{lomin\}/g, box.lomin).replace(/\{lomax\}/g, box.lomax);
+        return probe(cand.host, url, function (json) {
+          return (cand.kind === 'opensky' ? normOpenSky(json, Date.now())
                                           : normReadsb(json, Date.now())).length;
-        }).then(function (r) { out.push(r); });
+        }).then(function (r) {
+          r.tpl = cand.tpl; r.kind = cand.kind; r.mine = !!cand.mine;
+          out.push(r);
+        });
       });
     });
 
+    /* 실패한 주소의 호스트만 도달 여부를 확인한다 */
+    chain = chain.then(function () {
+      var need = [];
+      out.forEach(function (r) {
+        if (!r.ok && !r.mine && need.indexOf(r.name) < 0 && r.t === '연결 실패') need.push(r.name);
+      });
+      var sub = Promise.resolve();
+      need.forEach(function (h) {
+        sub = sub.then(function () { return reach(h).then(function (v) { hosts[h] = v; }); });
+      });
+      return sub;
+    });
+
     return chain.then(function () {
+      out.forEach(function (r) {
+        if (!r.ok && hosts[r.name] === true) {
+          r.hint = '서버는 살아 있는데 이 주소가 응답을 주지 않습니다 — ' +
+                   '없어진 경로이거나 CORS 를 열어 주지 않습니다';
+        } else if (!r.ok && hosts[r.name] === false) {
+          r.hint = '이 서버에 아예 닿지 못했습니다 — 없어졌거나 망에서 막혀 있습니다';
+        }
+      });
       return {
         env: {
           origin: (typeof location !== 'undefined') ? location.origin : '—',
@@ -408,7 +510,9 @@ var Source = (function () {
     on: on, start: start, stop: stop, fetchOnce: fetchOnce, advance: advance,
     setDemo: setDemo, setProvider: setProvider, setRadius: setRadius,
     setInterval: setInterval_,
-    diagnose: diagnose, noteCsp: noteCsp, probe: probe,
+    diagnose: diagnose, noteCsp: noteCsp, probe: probe, reach: reach,
+    setCustom: setCustom, getCustom: getCustom, customIndex: customIndex,
+    CANDIDATES: CANDIDATES, fillUrl: fillUrl,
     _ingest: ingest, _normReadsb: normReadsb, _normOpenSky: normOpenSky, _why: why
   };
 })();

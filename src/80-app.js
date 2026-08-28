@@ -22,7 +22,9 @@ var App = (function () {
     minAltFt: 0,
     scopeNm: 40,
     radiusNm: 120,
-    intervalMs: 6000
+    intervalMs: 6000,
+    customUrl: '',
+    customKind: 'readsb'
   };
 
   var state = {
@@ -155,6 +157,17 @@ var App = (function () {
       View.setFov(cfg.fov);
     }
     syncButtons();
+  }
+
+  /* 점검에서 찾은 주소를 채택한다. 직접 지정 공급자로 넣고 그것을 쓴다. */
+  function useUrl(tpl, kind) {
+    cfg.customUrl = tpl;
+    cfg.customKind = kind === 'opensky' ? 'opensky' : 'readsb';
+    Source.setCustom(cfg.customUrl, cfg.customKind);
+    if (cfg.demo) { cfg.demo = false; Source.setDemo(false); }
+    var i = Source.customIndex();
+    if (i >= 0) Source.setProvider(i);
+    save();
   }
 
   function select(id) {
@@ -306,6 +319,10 @@ var App = (function () {
       start(false);
       UI.toast('데모 항공기를 띄웁니다. 화면을 끌어 둘러보세요');
     };
+    /* 빨간 상태 칩을 누르면 바로 점검 화면으로 — 거기서 손쓸 수 있다 */
+    document.getElementById('stat').onclick = function (e) {
+      if (e.target.closest('.chip.bad')) UI.open('settings');
+    };
     document.getElementById('bList').onclick = function () { UI.toggle('list'); };
     document.getElementById('bSet').onclick = function () { UI.toggle('settings'); };
     document.getElementById('bClose').onclick = function () { UI.close(); };
@@ -405,6 +422,11 @@ var App = (function () {
     Orient.setManual(0, 12);             // 센서가 붙기 전까지의 기본 시선
     Source.setRadius(cfg.radiusNm);
     Source.setInterval(cfg.intervalMs);
+    if (cfg.customUrl) {
+      Source.setCustom(cfg.customUrl, cfg.customKind);
+      var ci = Source.customIndex();
+      if (ci >= 0) Source.setProvider(ci);
+    }
     if (cfg.demo) Source.state.demo = true;
     Route.setOn(cfg.route);
     bind();
@@ -419,5 +441,6 @@ var App = (function () {
 
   return { state: state, cfg: cfg, boot: boot, start: start, select: select,
            save: save, setCamera: setCamera, setWake: setWake, primeAudio: primeAudio,
+           useUrl: useUrl,
            capture: capture, lookAt: lookAt, pause: pause, resume: resume };
 })();

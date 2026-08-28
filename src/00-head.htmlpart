@@ -210,6 +210,11 @@ button,input,select{font:inherit;color:inherit}
 .fld .ctl{flex:none;display:flex;align-items:center;gap:8px}
 .fld.col{display:block}
 .fld.col .ctl{margin-top:8px;width:100%}
+#setUrl{width:100%;height:34px;padding:0 9px;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--r-sm);
+  font-family:var(--mono);font-size:11px;color:var(--ink)}
+#setUrl:focus{border-color:var(--hud);outline:none;box-shadow:0 0 0 2px rgba(95,227,161,.18)}
+#stat .chip.bad{cursor:pointer}
 input[type=range]{
   -webkit-appearance:none;appearance:none;width:100%;height:26px;background:transparent;cursor:pointer;
 }

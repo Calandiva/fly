@@ -355,9 +355,13 @@ var UI = (function () {
         (Route.state.off ? ' — 연속 실패로 중단됨' : Route.state.hits ? ' — ' + Route.state.hits + '건 확인' : ''),
         sw('setRoute', c.route)) +
       row('데모 모드', '실제 수신 대신 가상의 항공기를 띄웁니다', sw('setDemo', c.demo)) +
-      row('연결 점검', '공급자를 하나씩 찔러 보고 무엇이 막는지 알려 줍니다',
+      row('연결 점검', '알려진 주소를 모두 찔러 보고 되는 것을 골라 줍니다',
         '<button class="btn" id="bDiag">점검</button>') +
       '<div id="diagOut"></div>' +
+      row('직접 주소', '되는 주소를 알고 있다면 여기에. ' +
+        '{lat} {lon} {nm} 자리를 채워 씁니다',
+        '<input type="text" id="setUrl" class="mono" placeholder="https://…/{lat}/{lon}/{nm}" ' +
+        'value="' + esc(Source.getCustom().url) + '">', 'col') +
 
       '<div style="margin-top:16px;font-size:11px;color:var(--ink-3);line-height:1.65">' +
       '위치와 카메라 영상은 이 기기 밖으로 나가지 않습니다. 서버에는 조회할 좌표 범위만 보냅니다. ' +
@@ -414,6 +418,18 @@ var UI = (function () {
 
     var dg = document.getElementById('bDiag');
     if (dg) dg.onclick = function () { runDiag(dg); };
+
+    var cu = document.getElementById('setUrl');
+    if (cu) cu.onchange = function () {
+      var v = cu.value.trim();
+      if (!v) { Source.setCustom(''); c.customUrl = ''; App.save(); return; }
+      if (!/^https:\/\//.test(v)) { toast('https 주소여야 합니다', 'bad'); return; }
+      if (v.indexOf('{lat}') < 0 || v.indexOf('{lon}') < 0) {
+        toast('{lat} 과 {lon} 이 들어가야 합니다', 'bad'); return;
+      }
+      App.useUrl(v, /opensky/i.test(v) ? 'opensky' : 'readsb');
+      toast('직접 지정 주소를 씁니다');
+    };
   }
 
   /* ── 연결 점검 ────────────────────────────────────────────── */
@@ -430,19 +446,20 @@ var UI = (function () {
 
       var alive = d.providers.filter(function (r) { return r.ok; });
       var head = alive.length
-        ? '<b class="good">' + alive.length + '곳 정상</b> — 설정에서 그 공급자를 고르면 바로 받습니다.'
-        : '<b class="bad">모든 공급자에 닿지 못했습니다.</b>';
+        ? '<b class="good">' + alive.length + '개 주소가 정상</b> — 아래에서 하나를 골라 쓰면 바로 받습니다.'
+        : '<b class="bad">되는 주소를 찾지 못했습니다.</b> 아래 사유를 보고 직접 주소를 넣어 보세요.';
 
-      var cur = Source.PROVIDERS[Source.state.provider].name;
+      var curTpl = Source.getCustom().url;
       var rows = d.providers.map(function (r, i) {
-        var isCur = r.name === cur;
+        var isCur = r.tpl === curTpl && Source.state.provider === Source.customIndex();
+        var short = r.tpl.replace(/^https?:\/\//, '');
         return '<div class="diag-r">' +
           '<i class="' + (r.ok ? 'good' : 'bad') + '">' + (r.ok ? '정상' : esc(r.t)) + '</i>' +
-          '<b>' + esc(r.name) + (isCur ? ' <s>사용 중</s>' : '') + '</b>' +
+          '<b>' + esc(short) + (isCur ? ' <s>사용 중</s>' : '') + '</b>' +
           '<u>' + (r.ok ? r.n + '대 · ' + r.ms + 'ms' : r.ms + 'ms') + '</u>' +
           (r.ok
-            ? (isCur ? '' : '<em><button class="btn sm" data-use="' + i + '">이 공급자 쓰기</button></em>')
-            : '<em>' + esc(r.hint) + '</em>') +
+            ? (isCur ? '' : '<em><button class="btn sm" data-use="' + i + '">이 주소 쓰기</button></em>')
+            : '<em>' + esc(r.hint || '') + '</em>') +
         '</div>';
       }).join('');
 
@@ -466,15 +483,8 @@ var UI = (function () {
         var t = ev.target.closest('[data-use]');
         if (!t) return;
         var r = d.providers[parseInt(t.dataset.use, 10)];
-        var idx = -1;
-        for (var i = 0; i < Source.PROVIDERS.length; i++) {
-          if (Source.PROVIDERS[i].name === r.name) { idx = i; break; }
-        }
-        if (idx < 0) return;
-        if (App.cfg.demo) { App.cfg.demo = false; Source.setDemo(false); }
-        Source.setProvider(idx);
-        App.save();
-        toast(r.name + ' 으로 바꿨습니다');
+        App.useUrl(r.tpl, r.kind);
+        toast(r.name + ' 주소로 바꿨습니다');
         paint(App.state, true);
       };
     }).catch(function (err) {
