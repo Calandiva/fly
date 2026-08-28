@@ -24,7 +24,8 @@ var App = (function () {
     radiusNm: 120,
     intervalMs: 6000,
     customUrl: '',
-    customKind: 'readsb'
+    customKind: 'readsb',
+    lastGood: ''            // 지난번에 통하던 주소 id — 다음에 여기서 시작한다
   };
 
   var state = {
@@ -427,6 +428,16 @@ var App = (function () {
       var ci = Source.customIndex();
       if (ci >= 0) Source.setProvider(ci);
     }
+    /* 지난번에 통하던 주소가 있으면 거기서 시작한다 — 매번 처음부터
+       훑을 이유가 없다 */
+    if (cfg.lastGood) {
+      for (var gi = 0; gi < Source.PROVIDERS.length; gi++) {
+        if (Source.PROVIDERS[gi].id === cfg.lastGood) { Source.setProvider(gi); break; }
+      }
+    }
+    Source.setOnFound(function (prov) {
+      if (cfg.lastGood !== prov.id) { cfg.lastGood = prov.id; save(); }
+    });
     if (cfg.demo) Source.state.demo = true;
     Route.setOn(cfg.route);
     bind();

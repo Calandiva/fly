@@ -24,51 +24,58 @@ var Source = (function () {
       .replace(/\{km\}/g, String(Math.round(nm * 1.852)));
   }
 
+  function boxUrl(tpl, la, lo, nm) {
+    var b = Geo.degBox(la, Geo.nmToM(nm));
+    return fillUrl(tpl, la, lo, nm)
+      .replace(/\{lamin\}/g, (la - b.dLat).toFixed(4))
+      .replace(/\{lamax\}/g, (la + b.dLat).toFixed(4))
+      .replace(/\{lomin\}/g, (lo - b.dLon).toFixed(4))
+      .replace(/\{lomax\}/g, (lo + b.dLon).toFixed(4));
+  }
+
+  /* 공급자 = 후보 주소 하나. 어느 것이 지금 살아 있는지는 네트워크가 있는
+     기기에서만 알 수 있으므로 목록으로 두고 앱이 직접 찾아 쓰게 한다. */
   var PROVIDERS = [
-    { id: 'adsb.lol', name: 'adsb.lol', kind: 'readsb', max: 250,
-      url: function (la, lo, nm) { return 'https://api.adsb.lol/v2/lat/' + la.toFixed(4) + '/lon/' + lo.toFixed(4) + '/dist/' + nm; } },
-    { id: 'adsb.fi', name: 'adsb.fi', kind: 'readsb', max: 250,
-      url: function (la, lo, nm) { return 'https://opendata.adsb.fi/api/v2/lat/' + la.toFixed(4) + '/lon/' + lo.toFixed(4) + '/dist/' + nm; } },
-    { id: 'airplanes.live', name: 'airplanes.live', kind: 'readsb', max: 250,
-      url: function (la, lo, nm) { return 'https://api.airplanes.live/v2/point/' + la.toFixed(4) + '/' + lo.toFixed(4) + '/' + nm; } },
-    { id: 'opensky', name: 'OpenSky', kind: 'opensky', max: 400,
-      url: function (la, lo, nm) {
-        var b = Geo.degBox(la, Geo.nmToM(nm));
-        return 'https://opensky-network.org/api/states/all?lamin=' + (la - b.dLat).toFixed(4) +
-               '&lomin=' + (lo - b.dLon).toFixed(4) + '&lamax=' + (la + b.dLat).toFixed(4) +
-               '&lomax=' + (lo + b.dLon).toFixed(4);
-      } },
-    { id: 'custom', name: '직접 지정', kind: 'readsb', max: 250, custom: true,
-      url: function (la, lo, nm) { return fillUrl(custom.url, la, lo, nm); } }
+    { id: 'lol-lat',   name: 'adsb.lol',       note: 'v2/lat',    kind: 'readsb',  max: 250,
+      tpl: 'https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{nm}' },
+    { id: 'lol-point', name: 'adsb.lol',       note: 'v2/point',  kind: 'readsb',  max: 250,
+      tpl: 'https://api.adsb.lol/v2/point/{lat}/{lon}/{nm}' },
+    { id: 'lol-api0',  name: 'adsb.lol',       note: 'api/0',     kind: 'readsb',  max: 250,
+      tpl: 'https://api.adsb.lol/api/0/lat/{lat}/lon/{lon}/dist/{nm}' },
+    { id: 'fi-open',   name: 'adsb.fi',        note: 'opendata',  kind: 'readsb',  max: 250,
+      tpl: 'https://opendata.adsb.fi/api/v2/lat/{lat}/lon/{lon}/dist/{nm}' },
+    { id: 'fi-api',    name: 'adsb.fi',        note: 'api',       kind: 'readsb',  max: 250,
+      tpl: 'https://api.adsb.fi/v2/lat/{lat}/lon/{lon}/dist/{nm}' },
+    { id: 'live-v2',   name: 'airplanes.live', note: 'v2/point',  kind: 'readsb',  max: 250,
+      tpl: 'https://api.airplanes.live/v2/point/{lat}/{lon}/{nm}' },
+    { id: 'live-rest', name: 'airplanes.live', note: 'rest',      kind: 'readsb',  max: 250,
+      tpl: 'https://rest.airplanes.live/point/{lat}/{lon}/{nm}' },
+    { id: 'opensky',   name: 'OpenSky',        note: 'states',    kind: 'opensky', max: 400,
+      tpl: 'https://opensky-network.org/api/states/all?lamin={lamin}&lomin={lomin}&lamax={lamax}&lomax={lomax}' },
+    { id: 'custom',    name: '직접 지정',       note: '',          kind: 'readsb',  max: 250, custom: true, tpl: '' }
   ];
 
-  /* 연결 점검이 찔러 볼 후보들. 어느 것이 살아 있는지는 네트워크가 있는
-     기기에서만 알 수 있으므로, 판정을 코드에 박지 않고 실제로 물어본다. */
-  var CANDIDATES = [
-    { host: 'api.adsb.lol', kind: 'readsb',
-      tpl: 'https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{nm}' },
-    { host: 'api.adsb.lol', kind: 'readsb',
-      tpl: 'https://api.adsb.lol/v2/point/{lat}/{lon}/{nm}' },
-    { host: 'api.adsb.lol', kind: 'readsb',
-      tpl: 'https://api.adsb.lol/api/0/lat/{lat}/lon/{lon}/dist/{nm}' },
-    { host: 'opendata.adsb.fi', kind: 'readsb',
-      tpl: 'https://opendata.adsb.fi/api/v2/lat/{lat}/lon/{lon}/dist/{nm}' },
-    { host: 'api.adsb.fi', kind: 'readsb',
-      tpl: 'https://api.adsb.fi/v2/lat/{lat}/lon/{lon}/dist/{nm}' },
-    { host: 'api.airplanes.live', kind: 'readsb',
-      tpl: 'https://api.airplanes.live/v2/point/{lat}/{lon}/{nm}' },
-    { host: 'rest.airplanes.live', kind: 'readsb',
-      tpl: 'https://rest.airplanes.live/point/{lat}/{lon}/{nm}' },
-    { host: 'opensky-network.org', kind: 'opensky',
-      tpl: 'https://opensky-network.org/api/states/all?lamin={lamin}&lomin={lomin}&lamax={lamax}&lomax={lomax}' }
-  ];
+  PROVIDERS.forEach(function (pv) {
+    pv.url = function (la, lo, nm) {
+      return boxUrl(pv.custom ? custom.url : pv.tpl, la, lo, nm);
+    };
+    pv.label = pv.name + (pv.note ? ' · ' + pv.note : '');
+  });
+
+  var CANDIDATES = PROVIDERS.filter(function (pv) { return !pv.custom; })
+    .map(function (pv) {
+      return { host: pv.name + ' · ' + pv.note, kind: pv.kind, tpl: pv.tpl, id: pv.id };
+    });
 
   var st = {
     provider: 0, providerName: PROVIDERS[0].name,
     demo: false, live: false,
     lastOk: 0, lastTry: 0, lastErr: null, fails: 0,
     count: 0, fetching: false, latency: 0,
-    tIngest: 0, tSolved: 0
+    tIngest: 0, tSolved: 0,
+    everOk: false,          // 이 세션에서 한 번이라도 받아 봤는가
+    sweep: 0,               // 주소를 훑어 본 횟수 (한 바퀴 돌면 멈춘다)
+    searching: false
   };
 
   /* 페이지 보안 정책(CSP)이 막은 주소. "수신 실패" 가 CORS 인지 CSP 인지
@@ -250,24 +257,51 @@ var Source = (function () {
         st.latency = Math.round(performance.now() - t0);
         ingest(prov.kind === 'opensky' ? normOpenSky(json, now) : normReadsb(json, now), now);
         st.lastOk = now; st.lastErr = null; st.fails = 0; st.live = true;
-        st.providerName = prov.name;
+        st.everOk = true; st.searching = false; st.sweep = 0;
+        st.providerName = prov.label;
+        if (onFound) onFound(prov);              // 찾은 주소를 기억해 둔다
         emit();
       })
       .catch(function (e) {
         clearTimeout(timeout);
         st.fails++;
         st.lastErr = errText(e);
-        /* 두 번 연속 실패하면 다음 공급자로 */
-        if (st.fails >= 2 && PROVIDERS.length > 1) {
-          st.provider = (st.provider + 1) % PROVIDERS.length;
-          st.providerName = PROVIDERS[st.provider].name;
-          st.fails = 0;
-        }
         if (Date.now() - st.lastOk > cfg.maxAgeMs) st.live = false;
+
+        /* 아직 한 번도 못 받았다면 주소가 틀렸을 가능성이 크다.
+           갱신 주기를 기다리지 말고 다음 주소로 곧장 넘어가며 한 바퀴 훑는다.
+           설정에 들어가 버튼을 눌러야만 고쳐지는 건 고쳐지는 게 아니다. */
+        var usable = PROVIDERS.filter(function (pv) { return !pv.custom || custom.url; }).length;
+        if (!st.everOk && st.sweep < usable - 1) {
+          st.sweep++;
+          st.searching = true;
+          nextProvider();
+          emit();
+          st.fetching = false;
+          return new Promise(function (r) { setTimeout(r, 400); }).then(fetchOnce);
+        }
+        st.searching = false;
+
+        /* 이미 받아 본 적이 있으면 두 번 연속 실패했을 때만 옮긴다 */
+        if (st.everOk && st.fails >= 2) { nextProvider(); st.fails = 0; }
         emit();
       })
       .then(function () { st.fetching = false; });
   }
+
+  /* 쓸 수 있는 다음 주소로. 직접 지정은 값이 있을 때만 낀다. */
+  function nextProvider() {
+    for (var n = 1; n <= PROVIDERS.length; n++) {
+      var i = (st.provider + n) % PROVIDERS.length;
+      if (PROVIDERS[i].custom && !custom.url) continue;
+      st.provider = i;
+      st.providerName = PROVIDERS[i].label;
+      return;
+    }
+  }
+
+  var onFound = null;
+  function setOnFound(f) { onFound = f; }
 
   function start() {
     stop();
@@ -510,7 +544,7 @@ var Source = (function () {
     on: on, start: start, stop: stop, fetchOnce: fetchOnce, advance: advance,
     setDemo: setDemo, setProvider: setProvider, setRadius: setRadius,
     setInterval: setInterval_,
-    diagnose: diagnose, noteCsp: noteCsp, probe: probe, reach: reach,
+    diagnose: diagnose, noteCsp: noteCsp, probe: probe, reach: reach, setOnFound: setOnFound,
     setCustom: setCustom, getCustom: getCustom, customIndex: customIndex,
     CANDIDATES: CANDIDATES, fillUrl: fillUrl,
     _ingest: ingest, _normReadsb: normReadsb, _normOpenSky: normOpenSky, _why: why

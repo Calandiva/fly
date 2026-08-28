@@ -45,8 +45,15 @@ var UI = (function () {
     else if (!o.absolute) chips.push(['warn', '방위 미보정']);
 
     var age = s.lastOk ? (Date.now() - s.lastOk) / 1000 : null;
+    var total = Source.PROVIDERS.filter(function (pv) {
+      return !pv.custom || Source.getCustom().url;      // 비어 있는 직접 지정은 세지 않는다
+    }).length;
     if (s.demo) chips.push(['warn', '데모']);
-    else if (!s.live || age == null) chips.push(['bad', s.lastErr || '수신 대기']);
+    else if (s.searching) chips.push(['warn', '주소 찾는 중 ' + s.sweep + '/' + total]);
+    else if (!s.live || age == null) {
+      chips.push(['bad', (s.everOk ? (s.lastErr || '수신 끊김')
+                                   : '되는 주소 없음 — 눌러서 점검')]);
+    }
     else if (age > 25) chips.push(['warn', s.providerName + ' · ' + Geo.fmtAge(age)]);
     else chips.push(['live', s.providerName]);
 
@@ -345,11 +352,14 @@ var UI = (function () {
       row('조회 반경', '서버에 요청하는 범위. 넓을수록 응답이 커집니다',
         slider('setRadius', 20, 250, 10, Math.round(c.radiusNm), ' NM'), 'col') +
       row('갱신 주기', '', slider('setIval', 3, 30, 1, Math.round(c.intervalMs / 1000), ' 초'), 'col') +
-      row('공급자', '현재 ' + esc(Source.state.providerName) + ' 사용 중',
+      row('공급자', '현재 ' + esc(Source.state.providerName) + ' 사용 중. ' +
+        '받지 못하면 앱이 스스로 다음 주소를 시도합니다',
         '<select id="setProv" style="height:32px;background:var(--panel-2);border:1px solid var(--line);' +
         'border-radius:7px;padding:0 8px">' +
         Source.PROVIDERS.map(function (p, i) {
-          return '<option value="' + i + '"' + (i === Source.state.provider ? ' selected' : '') + '>' + esc(p.name) + '</option>';
+          if (p.custom && !Source.getCustom().url) return '';
+          return '<option value="' + i + '"' + (i === Source.state.provider ? ' selected' : '') + '>' +
+                 esc(p.label) + '</option>';
         }).join('') + '</select>') +
       row('항로 조회', '편명으로 출발·도착 공항을 찾습니다 (adsb.lol)' +
         (Route.state.off ? ' — 연속 실패로 중단됨' : Route.state.hits ? ' — ' + Route.state.hits + '건 확인' : ''),
