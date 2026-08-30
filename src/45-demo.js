@@ -101,6 +101,6 @@ var Demo = (function () {
 
   function stop() { if (timer) clearInterval(timer); timer = null; }
 
-  return { start: start, stop: stop, DEFAULT: DEFAULT,
+  return { start: start, stop: stop, step: step, DEFAULT: DEFAULT,
            get elapsed() { return (Date.now() - t0) / 1000; } };
 })();

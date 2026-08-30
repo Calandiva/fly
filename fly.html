@@ -1336,6 +1336,20 @@ var Track = (function () {
 
   /* 관측이 갱신될 때 한 번씩 다시 푼다. 매 프레임 풀 이유가 없다 —
      입력이 그대로면 답도 그대로다. */
+  /* 순항 중인 항공기는 화면에서 초당 0.4픽셀쯤 움직인다 — 물리적으로는
+     맞지만 눈에는 멈춰 보인다. 레이더 계기가 속도 벡터를 그리는 이유가
+     이것이다. 60초 뒤 위치를 미리 구해 두고 마커에서 거기까지 선을 긋는다. */
+  var LEAD_S = 60;
+
+  function lead(p, a) {
+    if (!p || !p.ok) return null;
+    if (a.gs == null || a.gs < 20 || a.track == null) return null;
+    var q = ahead(a, LEAD_S);
+    var g = Geo.haversine(p.lat, p.lon, q.lat, q.lon);
+    var dh = Geo.ftToM(q.altFt) - (p.alt || 0);
+    return { az: Geo.bearing(p.lat, p.lon, q.lat, q.lon), el: Geo.elevation(g, dh) };
+  }
+
   function update(fleet, nowMs) {
     var p = Position.state;
     sample(fleet, nowMs);
@@ -1343,6 +1357,7 @@ var Track = (function () {
       var a = fleet[k];
       if (a.slantM == null) continue;
       a.tca = tca(p, a);
+      a.lead = lead(p, a);
     }
   }
 
@@ -1368,7 +1383,7 @@ var Track = (function () {
   }
 
   return { tca: tca, sample: sample, update: update, ahead: ahead, forecast: forecast,
-           imminent: imminent, TRAIL_MAX: TRAIL_MAX, T: T };
+           lead: lead, imminent: imminent, TRAIL_MAX: TRAIL_MAX, T: T, LEAD_S: LEAD_S };
 })();
 
 /* ── 40-source.js — ADS-B 수신과 추측항법 ────────────────────────
@@ -2225,7 +2240,7 @@ var Demo = (function () {
 
   function stop() { if (timer) clearInterval(timer); timer = null; }
 
-  return { start: start, stop: stop, DEFAULT: DEFAULT,
+  return { start: start, stop: stop, step: step, DEFAULT: DEFAULT,
            get elapsed() { return (Date.now() - t0) / 1000; } };
 })();
 
@@ -2711,6 +2726,31 @@ var Render = (function () {
         cx.setLineDash([3, 4]);
         cx.beginPath(); cx.arc(p.x, p.y, s * 1.15 + 15, 0, 6.2832); cx.stroke();
         cx.restore();
+      }
+
+      /* 진행 방향 벡터 — 60초 뒤 위치까지. 길이가 곧 속도이고,
+         이게 없으면 순항기는 멈춰 있는 점으로만 보인다. */
+      if (opt.trail && a.lead) {
+        var lp = View.project(a.lead.az, a.lead.el);
+        if (lp.front) {
+          var lx = lp.x - p.x, ly = lp.y - p.y;
+          var len = Math.sqrt(lx * lx + ly * ly);
+          if (len > 2) {
+            /* 너무 짧으면 안 보이고 너무 길면 하늘을 가른다 */
+            var draw = Math.max(14, Math.min(70, len));
+            var ex = p.x + lx / len * draw, ey = p.y + ly / len * draw;
+            casedStroke(cx, function (gg) {
+              gg.beginPath(); gg.moveTo(p.x, p.y); gg.lineTo(ex, ey); gg.stroke();
+            }, isSel || near ? 1.8 : 1.2, isSel ? '#6FD8FF' : col, 0.35);
+            cx.save();
+            cx.globalAlpha = alpha;
+            cx.fillStyle = isSel ? '#6FD8FF' : col;
+            cx.beginPath(); cx.arc(ex, ey, isSel || near ? 2.4 : 1.8, 0, 6.2832); cx.fill();
+            cx.restore();
+            /* 라벨이 벡터 위에 앉지 않도록 끝점 언저리를 막아 둔다 */
+            boxes.push([ex - 12, ey - 10, 24, 20]);
+          }
+        }
       }
 
       hit.push({ id: a.id, x: p.x, y: p.y, r: Math.max(24, s * 1.4) });
@@ -3286,7 +3326,9 @@ var UI = (function () {
       row('레이더 기준', '스코프 위쪽을 무엇에 맞출지', '<div class="seg" id="upSeg">' +
         '<button data-v="0"' + (!c.headingUp ? ' class="on"' : '') + '>노스업</button>' +
         '<button data-v="1"' + (c.headingUp ? ' class="on"' : '') + '>헤딩업</button></div>') +
-      row('궤적', '지나온 자취를 스코프에, 선택한 항공기는 예상 경로까지', sw('setTrail', c.trail)) +
+      row('궤적과 진행 방향', '마커마다 60초 뒤까지의 벡터를 긋고, 스코프에는 ' +
+        '지나온 자취를 남깁니다. 순항기는 이게 없으면 멈춰 보입니다',
+        sw('setTrail', c.trail)) +
       row('화면 꺼짐 방지', '하늘을 보는 동안 화면이 꺼지지 않게 합니다', sw('setWake', c.wake)) +
 
       '<div class="sechead">근접 통과 알림</div>' +
@@ -3482,7 +3524,7 @@ var App = (function () {
 
   /* 빌드 표시 — build.py 가 채워 넣는다. 배포된 것이 어느 빌드인지
      화면에서 바로 확인할 수 있어야 "올리긴 했나" 를 두고 헤매지 않는다. */
-  var BUILD = '2026-08-30 22:27 a71277ab';
+  var BUILD = '2026-08-30 22:42 8d7f62fb';
 
   var cfg = {
     metric: true,

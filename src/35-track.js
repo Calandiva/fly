@@ -95,6 +95,20 @@ var Track = (function () {
 
   /* 관측이 갱신될 때 한 번씩 다시 푼다. 매 프레임 풀 이유가 없다 —
      입력이 그대로면 답도 그대로다. */
+  /* 순항 중인 항공기는 화면에서 초당 0.4픽셀쯤 움직인다 — 물리적으로는
+     맞지만 눈에는 멈춰 보인다. 레이더 계기가 속도 벡터를 그리는 이유가
+     이것이다. 60초 뒤 위치를 미리 구해 두고 마커에서 거기까지 선을 긋는다. */
+  var LEAD_S = 60;
+
+  function lead(p, a) {
+    if (!p || !p.ok) return null;
+    if (a.gs == null || a.gs < 20 || a.track == null) return null;
+    var q = ahead(a, LEAD_S);
+    var g = Geo.haversine(p.lat, p.lon, q.lat, q.lon);
+    var dh = Geo.ftToM(q.altFt) - (p.alt || 0);
+    return { az: Geo.bearing(p.lat, p.lon, q.lat, q.lon), el: Geo.elevation(g, dh) };
+  }
+
   function update(fleet, nowMs) {
     var p = Position.state;
     sample(fleet, nowMs);
@@ -102,6 +116,7 @@ var Track = (function () {
       var a = fleet[k];
       if (a.slantM == null) continue;
       a.tca = tca(p, a);
+      a.lead = lead(p, a);
     }
   }
 
@@ -127,5 +142,5 @@ var Track = (function () {
   }
 
   return { tca: tca, sample: sample, update: update, ahead: ahead, forecast: forecast,
-           imminent: imminent, TRAIL_MAX: TRAIL_MAX, T: T };
+           lead: lead, imminent: imminent, TRAIL_MAX: TRAIL_MAX, T: T, LEAD_S: LEAD_S };
 })();

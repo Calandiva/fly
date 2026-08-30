@@ -482,6 +482,31 @@ var Render = (function () {
         cx.restore();
       }
 
+      /* 진행 방향 벡터 — 60초 뒤 위치까지. 길이가 곧 속도이고,
+         이게 없으면 순항기는 멈춰 있는 점으로만 보인다. */
+      if (opt.trail && a.lead) {
+        var lp = View.project(a.lead.az, a.lead.el);
+        if (lp.front) {
+          var lx = lp.x - p.x, ly = lp.y - p.y;
+          var len = Math.sqrt(lx * lx + ly * ly);
+          if (len > 2) {
+            /* 너무 짧으면 안 보이고 너무 길면 하늘을 가른다 */
+            var draw = Math.max(14, Math.min(70, len));
+            var ex = p.x + lx / len * draw, ey = p.y + ly / len * draw;
+            casedStroke(cx, function (gg) {
+              gg.beginPath(); gg.moveTo(p.x, p.y); gg.lineTo(ex, ey); gg.stroke();
+            }, isSel || near ? 1.8 : 1.2, isSel ? '#6FD8FF' : col, 0.35);
+            cx.save();
+            cx.globalAlpha = alpha;
+            cx.fillStyle = isSel ? '#6FD8FF' : col;
+            cx.beginPath(); cx.arc(ex, ey, isSel || near ? 2.4 : 1.8, 0, 6.2832); cx.fill();
+            cx.restore();
+            /* 라벨이 벡터 위에 앉지 않도록 끝점 언저리를 막아 둔다 */
+            boxes.push([ex - 12, ey - 10, 24, 20]);
+          }
+        }
+      }
+
       hit.push({ id: a.id, x: p.x, y: p.y, r: Math.max(24, s * 1.4) });
 
       /* 라벨 */

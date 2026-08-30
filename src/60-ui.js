@@ -323,7 +323,9 @@ var UI = (function () {
       row('레이더 기준', '스코프 위쪽을 무엇에 맞출지', '<div class="seg" id="upSeg">' +
         '<button data-v="0"' + (!c.headingUp ? ' class="on"' : '') + '>노스업</button>' +
         '<button data-v="1"' + (c.headingUp ? ' class="on"' : '') + '>헤딩업</button></div>') +
-      row('궤적', '지나온 자취를 스코프에, 선택한 항공기는 예상 경로까지', sw('setTrail', c.trail)) +
+      row('궤적과 진행 방향', '마커마다 60초 뒤까지의 벡터를 긋고, 스코프에는 ' +
+        '지나온 자취를 남깁니다. 순항기는 이게 없으면 멈춰 보입니다',
+        sw('setTrail', c.trail)) +
       row('화면 꺼짐 방지', '하늘을 보는 동안 화면이 꺼지지 않게 합니다', sw('setWake', c.wake)) +
 
       '<div class="sechead">근접 통과 알림</div>' +
