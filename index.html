@@ -1484,7 +1484,8 @@ var Source = (function () {
     tIngest: 0, tSolved: 0,
     everOk: false,          // 이 세션에서 한 번이라도 받아 봤는가
     sweep: 0,               // 주소를 훑어 본 횟수 (한 바퀴 돌면 멈춘다)
-    searching: false
+    searching: false,
+    relayDead: false        // 같은 출처 중계가 404 — 서버 없는 호스팅이다
   };
 
   /* 페이지 보안 정책(CSP)이 막은 주소. "수신 실패" 가 CORS 인지 CSP 인지
@@ -1684,11 +1685,13 @@ var Source = (function () {
            그 밖의 실패(시간 초과 등)는 느려서일 수 있으므로 접지 않는다 —
            한 번 늦었다고 세션 내내 버리면 될 것도 안 된다. */
         if (prov.id === 'self') {
-          relayDead = /HTTP 404/.test(String((e && e.message) || ''));
+          relayDead = st.relayDead = /HTTP 404/.test(String((e && e.message) || ''));
         }
 
         var usable = PROVIDERS.filter(function (pv) { return !pv.custom || custom.url; }).length;
-        if (!st.everOk && st.sweep < usable - 1) {
+        /* 빠른 훑기는 한 번만. 한 바퀴 다 실패했는데 6초마다 9곳을 다시
+           두드리면 얻는 것 없이 상류만 괴롭힌다. */
+        if (!st.everOk && !swept && st.sweep < usable - 1) {
           st.sweep++;
           st.searching = true;
           nextProvider();
@@ -1699,7 +1702,8 @@ var Source = (function () {
         /* 한 바퀴를 다 돌았다. 다음 주기부터는 가장 가능성이 큰 곳으로
            되돌아가 계속 두드린다 — 마지막으로 실패한 자리에 눌러앉아
            있어 봐야 얻을 게 없다. */
-        if (!st.everOk && st.sweep >= usable - 1) {
+        if (!st.everOk && !swept && st.sweep >= usable - 1) {
+          swept = true;
           st.provider = relayDead ? 1 : 0;
           st.providerName = PROVIDERS[st.provider].label;
           st.sweep = 0;
@@ -1726,6 +1730,7 @@ var Source = (function () {
 
   var onFound = null;
   var relayDead = false;                  // 같은 출처 중계가 404 였는가
+  var swept = false;                      // 빠른 훑기를 이미 한 바퀴 돌았는가
   function setOnFound(f) { onFound = f; }
 
   function start() {
@@ -1768,8 +1773,10 @@ var Source = (function () {
 
   function setProvider(i) {
     st.provider = ((i % PROVIDERS.length) + PROVIDERS.length) % PROVIDERS.length;
-    st.providerName = PROVIDERS[st.provider].name;
+    st.providerName = PROVIDERS[st.provider].label;
     st.fails = 0;
+    swept = false;                        // 사람이 손댔으면 다시 찾아볼 만하다
+    st.sweep = 0;
     if (!st.demo) fetchOnce();
   }
 
@@ -3082,8 +3089,9 @@ var UI = (function () {
     if (s.demo) chips.push(['warn', '데모']);
     else if (s.searching) chips.push(['warn', '주소 찾는 중 ' + s.sweep + '/' + total]);
     else if (!s.live || age == null) {
-      chips.push(['bad', (s.everOk ? (s.lastErr || '수신 끊김')
-                                   : '되는 주소 없음 — 눌러서 점검')]);
+      chips.push(['bad', s.everOk ? (s.lastErr || '수신 끊김')
+                : s.relayDead ? '중계 서버 없는 주소 — 눌러서 확인'
+                : '되는 주소 없음 — 눌러서 점검']);
     }
     else if (age > 25) chips.push(['warn', s.providerName + ' · ' + Geo.fmtAge(age)]);
     else chips.push(['live', s.providerName]);
@@ -3489,9 +3497,14 @@ var UI = (function () {
       btn.textContent = '다시 점검';
 
       var alive = d.providers.filter(function (r) { return r.ok; });
+      var relay = d.providers[0];
+      var noServer = relay && !relay.ok && /404/.test(String(relay.t || ''));
       var head = alive.length
         ? '<b class="good">' + alive.length + '개 주소가 정상</b> — 아래에서 하나를 골라 쓰면 바로 받습니다.'
-        : '<b class="bad">되는 주소를 찾지 못했습니다.</b> 아래 사유를 보고 직접 주소를 넣어 보세요.';
+        : noServer
+          ? '<b class="bad">이 주소에는 중계 서버가 없습니다.</b> 공개 ADS-B API 는 브라우저가 ' +
+            '직접 부르지 못하게 막혀 있어(CORS), 서버 없이는 어떤 주소로도 받을 수 없습니다.'
+          : '<b class="bad">되는 주소를 찾지 못했습니다.</b> 아래 사유를 보고 직접 주소를 넣어 보세요.';
 
       var curTpl = Source.getCustom().url;
       var rows = d.providers.map(function (r, i) {
@@ -3514,13 +3527,24 @@ var UI = (function () {
         e.secure ? '보안 컨텍스트' : '비보안 컨텍스트 (카메라·센서 불가)',
         e.online ? '온라인' : '오프라인'
       ].join(' · ');
+      /* 정적 호스팅에서 헤매지 않도록 어디로 가야 하는지 짚어 준다 */
+      var host = (typeof location !== 'undefined') ? location.hostname : '';
+      var staticHost = /github\.io$|pages\.dev$|netlify\.app$|surge\.sh$/.test(host);
+      var move = noServer
+        ? '<div class="diag-w">' +
+            (staticHost ? '<b>' + esc(host) + '</b> 는 정적 호스팅이라 서버 함수를 둘 수 없습니다. '
+                        : '이 배포본에 <code>api/adsb</code> 함수가 없습니다. ') +
+            'Vercel 에 올린 <b>…vercel.app</b> 주소로 열면 같은 화면이 그대로 동작합니다.' +
+          '</div>'
+        : '';
+
       var csp = e.csp.length
         ? '<div class="diag-w">이 페이지의 보안 정책이 막은 주소: ' + esc(e.csp.join(', ')) +
           '<br>Artifact 처럼 외부 요청을 막는 곳에서는 실제 수신이 되지 않습니다 — 데모 모드로만 볼 수 있습니다.</div>'
         : '';
 
       out.innerHTML = '<div class="diag">' +
-        '<div class="diag-h">' + head + '</div>' + rows + csp +
+        '<div class="diag-h">' + head + '</div>' + move + rows + csp +
         '<div class="diag-e">' + env + '</div></div>';
 
       /* 살아 있는 곳을 찾았으면 바로 갈아탈 수 있게 한다 */
@@ -3552,7 +3576,7 @@ var App = (function () {
 
   /* 빌드 표시 — build.py 가 채워 넣는다. 배포된 것이 어느 빌드인지
      화면에서 바로 확인할 수 있어야 "올리긴 했나" 를 두고 헤매지 않는다. */
-  var BUILD = '2026-08-30 22:48 595596e3';
+  var BUILD = '2026-08-30 23:08 3b8adf2d';
 
   var cfg = {
     metric: true,
@@ -3756,8 +3780,23 @@ var App = (function () {
 
     UI.status(state);
     UI.paint(state, false);
+    hostNotice();
     alerts(list, now);
     if (cfg.route) Route.pump(list);
+  }
+
+  /* 서버 없는 호스팅이면 한 번 짚어 준다 — 여기서는 무엇을 해도 안 되고,
+     어디로 가야 하는지 모르면 계속 같은 자리를 맴돌게 된다. */
+  var noticed = false;
+  function hostNotice() {
+    if (noticed || !state.started) return;
+    var s = Source.state;
+    if (s.demo || s.everOk || !s.relayDead || s.searching) return;
+    if (s.sweep !== 0) return;                    // 아직 훑는 중
+    noticed = true;
+    var host = location.hostname;
+    UI.toast(host + ' 에는 중계 서버가 없어 항공기를 받을 수 없습니다 — ' +
+             'Vercel 주소(…vercel.app)로 열어 주세요', 'bad');
   }
 
   function pause() { if (raf) cancelAnimationFrame(raf); raf = null; tPrev = 0; }

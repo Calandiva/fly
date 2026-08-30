@@ -210,8 +210,23 @@ var App = (function () {
 
     UI.status(state);
     UI.paint(state, false);
+    hostNotice();
     alerts(list, now);
     if (cfg.route) Route.pump(list);
+  }
+
+  /* 서버 없는 호스팅이면 한 번 짚어 준다 — 여기서는 무엇을 해도 안 되고,
+     어디로 가야 하는지 모르면 계속 같은 자리를 맴돌게 된다. */
+  var noticed = false;
+  function hostNotice() {
+    if (noticed || !state.started) return;
+    var s = Source.state;
+    if (s.demo || s.everOk || !s.relayDead || s.searching) return;
+    if (s.sweep !== 0) return;                    // 아직 훑는 중
+    noticed = true;
+    var host = location.hostname;
+    UI.toast(host + ' 에는 중계 서버가 없어 항공기를 받을 수 없습니다 — ' +
+             'Vercel 주소(…vercel.app)로 열어 주세요', 'bad');
   }
 
   function pause() { if (raf) cancelAnimationFrame(raf); raf = null; tPrev = 0; }

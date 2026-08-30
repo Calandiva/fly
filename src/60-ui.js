@@ -51,8 +51,9 @@ var UI = (function () {
     if (s.demo) chips.push(['warn', '데모']);
     else if (s.searching) chips.push(['warn', '주소 찾는 중 ' + s.sweep + '/' + total]);
     else if (!s.live || age == null) {
-      chips.push(['bad', (s.everOk ? (s.lastErr || '수신 끊김')
-                                   : '되는 주소 없음 — 눌러서 점검')]);
+      chips.push(['bad', s.everOk ? (s.lastErr || '수신 끊김')
+                : s.relayDead ? '중계 서버 없는 주소 — 눌러서 확인'
+                : '되는 주소 없음 — 눌러서 점검']);
     }
     else if (age > 25) chips.push(['warn', s.providerName + ' · ' + Geo.fmtAge(age)]);
     else chips.push(['live', s.providerName]);
@@ -458,9 +459,14 @@ var UI = (function () {
       btn.textContent = '다시 점검';
 
       var alive = d.providers.filter(function (r) { return r.ok; });
+      var relay = d.providers[0];
+      var noServer = relay && !relay.ok && /404/.test(String(relay.t || ''));
       var head = alive.length
         ? '<b class="good">' + alive.length + '개 주소가 정상</b> — 아래에서 하나를 골라 쓰면 바로 받습니다.'
-        : '<b class="bad">되는 주소를 찾지 못했습니다.</b> 아래 사유를 보고 직접 주소를 넣어 보세요.';
+        : noServer
+          ? '<b class="bad">이 주소에는 중계 서버가 없습니다.</b> 공개 ADS-B API 는 브라우저가 ' +
+            '직접 부르지 못하게 막혀 있어(CORS), 서버 없이는 어떤 주소로도 받을 수 없습니다.'
+          : '<b class="bad">되는 주소를 찾지 못했습니다.</b> 아래 사유를 보고 직접 주소를 넣어 보세요.';
 
       var curTpl = Source.getCustom().url;
       var rows = d.providers.map(function (r, i) {
@@ -483,13 +489,24 @@ var UI = (function () {
         e.secure ? '보안 컨텍스트' : '비보안 컨텍스트 (카메라·센서 불가)',
         e.online ? '온라인' : '오프라인'
       ].join(' · ');
+      /* 정적 호스팅에서 헤매지 않도록 어디로 가야 하는지 짚어 준다 */
+      var host = (typeof location !== 'undefined') ? location.hostname : '';
+      var staticHost = /github\.io$|pages\.dev$|netlify\.app$|surge\.sh$/.test(host);
+      var move = noServer
+        ? '<div class="diag-w">' +
+            (staticHost ? '<b>' + esc(host) + '</b> 는 정적 호스팅이라 서버 함수를 둘 수 없습니다. '
+                        : '이 배포본에 <code>api/adsb</code> 함수가 없습니다. ') +
+            'Vercel 에 올린 <b>…vercel.app</b> 주소로 열면 같은 화면이 그대로 동작합니다.' +
+          '</div>'
+        : '';
+
       var csp = e.csp.length
         ? '<div class="diag-w">이 페이지의 보안 정책이 막은 주소: ' + esc(e.csp.join(', ')) +
           '<br>Artifact 처럼 외부 요청을 막는 곳에서는 실제 수신이 되지 않습니다 — 데모 모드로만 볼 수 있습니다.</div>'
         : '';
 
       out.innerHTML = '<div class="diag">' +
-        '<div class="diag-h">' + head + '</div>' + rows + csp +
+        '<div class="diag-h">' + head + '</div>' + move + rows + csp +
         '<div class="diag-e">' + env + '</div></div>';
 
       /* 살아 있는 곳을 찾았으면 바로 갈아탈 수 있게 한다 */

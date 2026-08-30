@@ -84,7 +84,8 @@ var Source = (function () {
     tIngest: 0, tSolved: 0,
     everOk: false,          // 이 세션에서 한 번이라도 받아 봤는가
     sweep: 0,               // 주소를 훑어 본 횟수 (한 바퀴 돌면 멈춘다)
-    searching: false
+    searching: false,
+    relayDead: false        // 같은 출처 중계가 404 — 서버 없는 호스팅이다
   };
 
   /* 페이지 보안 정책(CSP)이 막은 주소. "수신 실패" 가 CORS 인지 CSP 인지
@@ -284,11 +285,13 @@ var Source = (function () {
            그 밖의 실패(시간 초과 등)는 느려서일 수 있으므로 접지 않는다 —
            한 번 늦었다고 세션 내내 버리면 될 것도 안 된다. */
         if (prov.id === 'self') {
-          relayDead = /HTTP 404/.test(String((e && e.message) || ''));
+          relayDead = st.relayDead = /HTTP 404/.test(String((e && e.message) || ''));
         }
 
         var usable = PROVIDERS.filter(function (pv) { return !pv.custom || custom.url; }).length;
-        if (!st.everOk && st.sweep < usable - 1) {
+        /* 빠른 훑기는 한 번만. 한 바퀴 다 실패했는데 6초마다 9곳을 다시
+           두드리면 얻는 것 없이 상류만 괴롭힌다. */
+        if (!st.everOk && !swept && st.sweep < usable - 1) {
           st.sweep++;
           st.searching = true;
           nextProvider();
@@ -299,7 +302,8 @@ var Source = (function () {
         /* 한 바퀴를 다 돌았다. 다음 주기부터는 가장 가능성이 큰 곳으로
            되돌아가 계속 두드린다 — 마지막으로 실패한 자리에 눌러앉아
            있어 봐야 얻을 게 없다. */
-        if (!st.everOk && st.sweep >= usable - 1) {
+        if (!st.everOk && !swept && st.sweep >= usable - 1) {
+          swept = true;
           st.provider = relayDead ? 1 : 0;
           st.providerName = PROVIDERS[st.provider].label;
           st.sweep = 0;
@@ -326,6 +330,7 @@ var Source = (function () {
 
   var onFound = null;
   var relayDead = false;                  // 같은 출처 중계가 404 였는가
+  var swept = false;                      // 빠른 훑기를 이미 한 바퀴 돌았는가
   function setOnFound(f) { onFound = f; }
 
   function start() {
@@ -368,8 +373,10 @@ var Source = (function () {
 
   function setProvider(i) {
     st.provider = ((i % PROVIDERS.length) + PROVIDERS.length) % PROVIDERS.length;
-    st.providerName = PROVIDERS[st.provider].name;
+    st.providerName = PROVIDERS[st.provider].label;
     st.fails = 0;
+    swept = false;                        // 사람이 손댔으면 다시 찾아볼 만하다
+    st.sweep = 0;
     if (!st.demo) fetchOnce();
   }
 
