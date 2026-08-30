@@ -7,7 +7,7 @@
 카메라와 방향 센서는 https 또는 localhost 에서만 동작한다. file:// 로 열면
 데모 모드와 드래그 둘러보기까지만 확인할 수 있다.
 """
-import io, os, sys, subprocess, datetime
+import io, os, sys, hashlib, datetime
 
 SRC = 'src'
 JS = ['20-geo.js', '25-catalog.js', '30-orient.js', '32-sensors.js',
@@ -26,26 +26,22 @@ def wr(path, text):
     io.open(path, 'w', encoding='utf-8', newline='\n').write(text)
 
 
-def build_stamp():
-    """배포된 것이 어느 빌드인지 화면에서 보이게 하려고 박아 넣는다."""
+def build_stamp(js):
+    """배포된 것이 어느 빌드인지 화면에서 보이게 하려고 박아 넣는다.
+
+    커밋 해시를 쓰면 늘 한 발 뒤처진다 — 빌드가 커밋보다 먼저이기 때문.
+    번들 내용의 해시를 쓰면 배포된 페이지와 소스가 같은지 바로 대조된다.
+    """
     when = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
-    try:
-        sha = subprocess.check_output(
-            ['git', 'rev-parse', '--short', 'HEAD'],
-            stderr=subprocess.DEVNULL).decode().strip()
-        dirty = subprocess.check_output(
-            ['git', 'status', '--porcelain'],
-            stderr=subprocess.DEVNULL).decode().strip()
-        return when + ' ' + sha + ('+' if dirty else '')
-    except Exception:
-        return when
+    digest = hashlib.sha256(js.encode('utf-8')).hexdigest()[:8]
+    return when + ' ' + digest
 
 
 def main():
     head = rd('00-head.htmlpart')
     body = rd('10-body.htmlpart')
     js = '\n'.join(rd(n) for n in JS)
-    js = js.replace('__BUILD__', build_stamp())
+    js = js.replace('__BUILD__', build_stamp(js))
 
     wr('fly.bundle.js', js)
 
@@ -78,6 +74,7 @@ def main():
     print('index.html  %7.1f KB   (Pages / Vercel / file:// 로컬)' % kb(page))
     print('fly.html    %7.1f KB   (Artifact 배포용)' % kb(art))
     print('bundle js   %7.1f KB   (%d 파일)' % (kb(js), len(JS)))
+    print('빌드 표시   %s' % js[js.index("var BUILD = '") + 13:].split("'")[0])
 
 
 if __name__ == '__main__':
