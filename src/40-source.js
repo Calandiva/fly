@@ -280,6 +280,13 @@ var Source = (function () {
         /* 아직 한 번도 못 받았다면 주소가 틀렸을 가능성이 크다.
            갱신 주기를 기다리지 말고 다음 주소로 곧장 넘어가며 한 바퀴 훑는다.
            설정에 들어가 버튼을 눌러야만 고쳐지는 건 고쳐지는 게 아니다. */
+        /* 중계가 404 면 배포가 안 된 것이니 이 세션에서는 접는다.
+           그 밖의 실패(시간 초과 등)는 느려서일 수 있으므로 접지 않는다 —
+           한 번 늦었다고 세션 내내 버리면 될 것도 안 된다. */
+        if (prov.id === 'self') {
+          relayDead = /HTTP 404/.test(String((e && e.message) || ''));
+        }
+
         var usable = PROVIDERS.filter(function (pv) { return !pv.custom || custom.url; }).length;
         if (!st.everOk && st.sweep < usable - 1) {
           st.sweep++;
@@ -288,6 +295,14 @@ var Source = (function () {
           emit();
           st.fetching = false;
           return new Promise(function (r) { setTimeout(r, 400); }).then(fetchOnce);
+        }
+        /* 한 바퀴를 다 돌았다. 다음 주기부터는 가장 가능성이 큰 곳으로
+           되돌아가 계속 두드린다 — 마지막으로 실패한 자리에 눌러앉아
+           있어 봐야 얻을 게 없다. */
+        if (!st.everOk && st.sweep >= usable - 1) {
+          st.provider = relayDead ? 1 : 0;
+          st.providerName = PROVIDERS[st.provider].label;
+          st.sweep = 0;
         }
         st.searching = false;
 
@@ -310,6 +325,7 @@ var Source = (function () {
   }
 
   var onFound = null;
+  var relayDead = false;                  // 같은 출처 중계가 404 였는가
   function setOnFound(f) { onFound = f; }
 
   function start() {

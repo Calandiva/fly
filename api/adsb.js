@@ -44,27 +44,51 @@ module.exports = async function handler(req, res) {
   const la = lat.toFixed(4), lo = lon.toFixed(4);
   const tried = [];
 
-  for (const up of UPSTREAM) {
+  /* 상류를 하나씩 기다리면 최악이 3 x 8초 = 24초다. 클라이언트는 12초에
+     포기하므로, 느린 회선이나 콜드 스타트가 겹치면 서버는 아직 시도 중인데
+     화면에는 "수신 실패" 만 남는다. 그래서 한꺼번에 띄우고 가장 먼저
+     제대로 답하는 것을 쓴다. */
+  const PER_TRY = 6000;
+
+  const attempt = async (up) => {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 8000);
+    const timer = setTimeout(() => ctl.abort(), PER_TRY);
     try {
       const r = await fetch(up.url(la, lo, nm), {
         signal: ctl.signal,
         headers: { 'Accept': 'application/json', 'User-Agent': 'fly-ar-radar/1.0' }
       });
-      clearTimeout(timer);
-      if (!r.ok) { tried.push(`${up.name}: HTTP ${r.status}`); continue; }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const json = await r.json();
       const ac = json.ac || json.aircraft;
-      if (!Array.isArray(ac)) { tried.push(`${up.name}: 모양이 다름`); continue; }
-
-      /* 몇 초 캐시해 둔다 — 같은 곳을 보는 사람이 여럿이면 상류 부담이 준다 */
-      res.setHeader('Cache-Control', 's-maxage=4, stale-while-revalidate=20');
-      return res.status(200).json({ ac, now: json.now || Date.now(), _via: up.name });
+      if (!Array.isArray(ac)) throw new Error('모양이 다름');
+      return { ac, now: json.now || Date.now(), _via: up.name };
     } catch (e) {
+      throw new Error(`${up.name}: ${e.name === 'AbortError' ? '시간 초과' : (e.message || '실패')}`);
+    } finally {
       clearTimeout(timer);
-      tried.push(`${up.name}: ${e.name === 'AbortError' ? '시간 초과' : (e.message || '실패')}`);
     }
+  };
+
+  /* Promise.any 는 Node 15+ 에 있지만, 실패 사유를 모아 두려면 직접 도는 편이
+     낫다 — 어느 상류가 왜 안 됐는지가 화면 진단까지 그대로 올라간다. */
+  const winner = await new Promise((resolve) => {
+    let left = UPSTREAM.length;
+    let done = false;
+    UPSTREAM.forEach((up) => {
+      attempt(up).then((v) => {
+        if (!done) { done = true; resolve(v); }
+      }, (e) => {
+        tried.push(e.message);
+        if (--left === 0 && !done) { done = true; resolve(null); }
+      });
+    });
+  });
+
+  if (winner) {
+    /* 몇 초 캐시해 둔다 — 같은 곳을 보는 사람이 여럿이면 상류 부담이 준다 */
+    res.setHeader('Cache-Control', 's-maxage=4, stale-while-revalidate=20');
+    return res.status(200).json(winner);
   }
 
   res.setHeader('Cache-Control', 'no-store');
