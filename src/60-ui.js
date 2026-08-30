@@ -37,9 +37,17 @@ var UI = (function () {
     var p = Position.state, o = Orient.state, s = Source.state;
     var chips = [];
 
-    if (!p.ok) chips.push(['bad', '위치 없음']);
-    else if (p.manual) chips.push(['warn', '위치 수동']);
-    else chips.push(['', '±' + (p.acc != null ? Math.round(p.acc) : '?') + ' m']);
+    if (!p.ok) {
+      chips.push(['bad', p.perm === 'denied' ? '위치 권한 거부됨 — 눌러서 확인'
+                       : p.lost ? '위치 끊김 — 눌러서 확인'
+                       : '위치 확인 중']);
+    } else if (p.manual) {
+      chips.push(['warn', '위치 수동']);
+    } else if (Position.stale(90)) {
+      chips.push(['warn', '위치 ' + Geo.fmtAge(Position.age()) + ' — 눌러서 갱신']);
+    } else {
+      chips.push(['', '±' + (p.acc != null ? Math.round(p.acc) : '?') + ' m']);
+    }
 
     if (Orient.stale()) chips.push(['bad', '방향 센서 없음']);
     else if (!o.absolute) chips.push(['warn', '방위 미보정']);
@@ -315,7 +323,33 @@ var UI = (function () {
       return '<label class="sw"><input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '><i></i></label>';
     }
 
+    var pos = Position.state;
+    var permTxt = pos.perm === 'granted' ? '허용됨'
+                : pos.perm === 'denied' ? '거부됨'
+                : pos.perm === 'prompt' ? '아직 묻지 않음' : '확인 불가';
+    var permCls = pos.perm === 'granted' ? 'good' : pos.perm === 'denied' ? 'bad' : 'warn';
+
     el.body.innerHTML =
+      '<div class="sechead">현재 위치 기준</div>' +
+      '<div class="pos">' +
+        '<div class="pos-c">' + esc(Geo.fmtLatLon(pos.lat, pos.lon)) + '</div>' +
+        '<div class="pos-g">' +
+          '<span><k>권한</k><b class="' + permCls + '">' + esc(permTxt) + '</b></span>' +
+          '<span><k>정확도</k><b>' + (pos.acc != null ? '±' + Math.round(pos.acc) + ' m' : '—') + '</b></span>' +
+          '<span><k>갱신</k><b>' + esc(pos.ok ? Geo.fmtAge(Position.age()) : '—') + '</b></span>' +
+          '<span><k>받은 좌표</k><b>' + pos.fixes + '개</b></span>' +
+          '<span><k>고도</k><b>' + (pos.alt ? Math.round(pos.alt) + ' m' : '—') + '</b></span>' +
+          '<span><k>지켜보기</k><b>' + (pos.watching ? '켜짐' : '꺼짐') + '</b></span>' +
+        '</div>' +
+        (pos.err ? '<div class="pos-e">' + esc(pos.err) + '</div>' : '') +
+        (pos.perm === 'denied'
+          ? '<div class="pos-e">브라우저 주소창의 자물쇠(또는 ⓘ)를 눌러 이 사이트의 ' +
+            '위치 권한을 허용으로 바꾼 뒤 다시 잡아 주세요.</div>' : '') +
+        '<div class="pos-b">' +
+          '<button class="btn sm" id="bPosFix">위치 다시 잡기</button>' +
+          '<button class="btn sm" id="bPosCopy">좌표 복사</button>' +
+        '</div>' +
+      '</div>' +
       '<div class="sechead">보기</div>' +
       row('단위', '거리·고도·속도 표기', '<div class="seg" id="unitSeg">' +
         '<button data-v="1"' + (c.metric ? ' class="on"' : '') + '>미터법</button>' +
@@ -430,6 +464,28 @@ var UI = (function () {
     var p = document.getElementById('setProv');
     if (p) p.onchange = function () { Source.setProvider(parseInt(p.value, 10)); App.save(); };
 
+    var pf = document.getElementById('bPosFix');
+    if (pf) pf.onclick = function () {
+      pf.disabled = true; pf.textContent = '잡는 중…';
+      Position.refresh().then(function (s) {
+        toast('위치를 다시 잡았습니다 — ±' + Math.round(s.acc) + ' m');
+        paint(App.state, true);
+      }).catch(function (e) {
+        toast((e && e.message) || '위치를 잡지 못했습니다', 'bad');
+        paint(App.state, true);
+      });
+    };
+    var pc = document.getElementById('bPosCopy');
+    if (pc) pc.onclick = function () {
+      var s = Position.state;
+      if (!s.ok) return toast('아직 위치가 없습니다', 'warn');
+      var txt = s.lat.toFixed(6) + ', ' + s.lon.toFixed(6);
+      var done = function () { toast('좌표를 복사했습니다: ' + txt); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(done, function () { fallback(txt, done); });
+      } else fallback(txt, done);
+    };
+
     var dg = document.getElementById('bDiag');
     if (dg) dg.onclick = function () { runDiag(dg); };
 
@@ -507,7 +563,27 @@ var UI = (function () {
 
       out.innerHTML = '<div class="diag">' +
         '<div class="diag-h">' + head + '</div>' + move + rows + csp +
-        '<div class="diag-e">' + env + '</div></div>';
+        '<div class="diag-e">' + env + '</div>' +
+        '<button class="btn sm" id="bCopyDiag" style="margin-top:9px;width:100%">결과 복사</button>' +
+        '</div>';
+
+      /* 한 줄씩 옮겨 적다 보면 정작 필요한 줄이 빠진다 — 통째로 복사해 준다 */
+      var cp = document.getElementById('bCopyDiag');
+      if (cp) cp.onclick = function () {
+        var txt = ['Fly 연결 점검  ' + App.BUILD,
+                   e.origin + '  ' + (e.secure ? 'secure' : 'insecure') +
+                   '  ' + (e.online ? 'online' : 'offline')];
+        d.providers.forEach(function (r) {
+          txt.push((r.ok ? '[정상] ' : '[' + r.t + '] ') + r.tpl +
+                   (r.ok ? '  ' + r.n + '대 ' + r.ms + 'ms' : '  ' + (r.hint || '')));
+        });
+        if (e.csp.length) txt.push('CSP 차단: ' + e.csp.join(', '));
+        var body = txt.join('\n');
+        var done = function () { toast('결과를 복사했습니다 — 붙여넣어 보내주세요'); };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(body).then(done, function () { fallback(body, done); });
+        } else fallback(body, done);
+      };
 
       /* 살아 있는 곳을 찾았으면 바로 갈아탈 수 있게 한다 */
       out.onclick = function (ev) {
@@ -524,6 +600,29 @@ var UI = (function () {
       out.innerHTML = '<div class="diag"><div class="diag-w">점검을 마치지 못했습니다: ' +
                       esc((err && err.message) || '') + '</div></div>';
     });
+  }
+
+  /* clipboard API 가 막힌 브라우저를 위한 최후 수단 */
+  function fallback(text, done) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand && document.execCommand('copy');
+      ta.remove();
+      if (ok) return done();
+    } catch (err) {}
+    /* 그래도 안 되면 눈으로 읽어 갈 수 있게 펼쳐 둔다 */
+    var pre = document.createElement('pre');
+    pre.textContent = text;
+    pre.style.cssText = 'white-space:pre-wrap;word-break:break-all;font-size:10.5px;' +
+      'margin-top:8px;padding:9px;border-radius:6px;background:var(--panel-3);' +
+      'border:1px solid var(--line);color:var(--ink-2);user-select:text';
+    var out = document.getElementById('diagOut');
+    if (out) out.appendChild(pre);
+    toast('복사가 막혀 있어 아래에 펼쳤습니다 — 길게 눌러 복사하세요', 'warn');
   }
 
   return { init: init, toast: toast, status: status, open: open, close: close,

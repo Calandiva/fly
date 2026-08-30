@@ -113,6 +113,14 @@ var Geo = (function () {
     if (ft == null || !isFinite(ft) || ft < 18000) return null;
     return 'FL' + ('00' + Math.round(ft / 100)).slice(-3);
   }
+  /* 좌표 표기. 도분초는 읽기 어렵고 소수 5자리면 약 1m 이다. */
+  function fmtLatLon(lat, lon) {
+    if (lat == null || lon == null) return '—';
+    var ns = lat >= 0 ? 'N' : 'S', ew = lon >= 0 ? 'E' : 'W';
+    return Math.abs(lat).toFixed(5) + '° ' + ns + '  ' +
+           Math.abs(lon).toFixed(5) + '° ' + ew;
+  }
+
   /* 경과 시간 */
   function fmtAge(sec) {
     if (sec == null || !isFinite(sec)) return '—';
@@ -129,6 +137,7 @@ var Geo = (function () {
     elevation: elevation, slant: slant, enu: enu, degBox: degBox,
     ftToM: ftToM, mToFt: mToFt, ktToMps: ktToMps, nmToM: nmToM, mToNm: mToNm,
     fmtDist: fmtDist, fmtAlt: fmtAlt, fmtSpd: fmtSpd, fmtVs: fmtVs,
-    compass: compass, fmtAz: fmtAz, flightLevel: flightLevel, fmtAge: fmtAge
+    compass: compass, fmtAz: fmtAz, flightLevel: flightLevel, fmtAge: fmtAge,
+    fmtLatLon: fmtLatLon
   };
 })();

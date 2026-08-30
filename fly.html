@@ -237,6 +237,22 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border:3px solid #061
   background:var(--ink-3);transition:.16s}
 .sw input:checked + i{background:rgba(95,227,161,.24);border-color:var(--line-2)}
 .sw input:checked + i::after{transform:translateX(18px);background:var(--hud)}
+/* 현재 위치 기준 */
+.pos{padding:11px 12px;border-radius:var(--r-sm);background:var(--panel-2);border:1px solid var(--line)}
+.pos-c{font-family:var(--mono);font-size:13.5px;font-weight:600;color:var(--hud);
+  letter-spacing:-.2px;word-break:keep-all}
+.pos-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(88px,1fr));gap:7px 10px;margin-top:9px}
+.pos-g span{display:block;min-width:0}
+.pos-g k{display:block;font-family:var(--mono);font-size:9px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--ink-3)}
+.pos-g b{display:block;font-size:12.5px;font-weight:500;margin-top:1px}
+.pos-g b.good{color:var(--hud)} .pos-g b.bad{color:var(--red)} .pos-g b.warn{color:var(--amber)}
+.pos-e{margin-top:9px;padding:8px 10px;border-radius:6px;font-size:11.5px;line-height:1.55;
+  background:rgba(255,194,75,.12);border:1px solid rgba(255,194,75,.3);color:var(--amber)}
+.pos-b{display:flex;gap:7px;margin-top:10px}
+.pos-b .btn{flex:1}
+#stat .chip.warn{cursor:pointer}
+
 .build{margin-top:14px;padding:7px 10px;border-radius:6px;background:var(--panel-2);
   border:1px solid var(--line);font-family:var(--mono);font-size:10.5px;
   color:var(--ink-2);letter-spacing:.02em;text-align:center}
@@ -494,6 +510,14 @@ var Geo = (function () {
     if (ft == null || !isFinite(ft) || ft < 18000) return null;
     return 'FL' + ('00' + Math.round(ft / 100)).slice(-3);
   }
+  /* 좌표 표기. 도분초는 읽기 어렵고 소수 5자리면 약 1m 이다. */
+  function fmtLatLon(lat, lon) {
+    if (lat == null || lon == null) return '—';
+    var ns = lat >= 0 ? 'N' : 'S', ew = lon >= 0 ? 'E' : 'W';
+    return Math.abs(lat).toFixed(5) + '° ' + ns + '  ' +
+           Math.abs(lon).toFixed(5) + '° ' + ew;
+  }
+
   /* 경과 시간 */
   function fmtAge(sec) {
     if (sec == null || !isFinite(sec)) return '—';
@@ -510,7 +534,8 @@ var Geo = (function () {
     elevation: elevation, slant: slant, enu: enu, degBox: degBox,
     ftToM: ftToM, mToFt: mToFt, ktToMps: ktToMps, nmToM: nmToM, mToNm: mToNm,
     fmtDist: fmtDist, fmtAlt: fmtAlt, fmtSpd: fmtSpd, fmtVs: fmtVs,
-    compass: compass, fmtAz: fmtAz, flightLevel: flightLevel, fmtAge: fmtAge
+    compass: compass, fmtAz: fmtAz, flightLevel: flightLevel, fmtAge: fmtAge,
+    fmtLatLon: fmtLatLon
   };
 })();
 
@@ -1105,25 +1130,64 @@ var View = (function () {
 var Position = (function () {
   var st = {
     ok: false, lat: null, lon: null, alt: 0, acc: null,
-    ts: 0, err: null, watching: false, manual: false
+    ts: 0, err: null, watching: false, manual: false,
+    perm: 'unknown',        // granted | prompt | denied | unknown
+    fixes: 0,               // 지금까지 받은 좌표 개수
+    lost: false             // 한 번 잡혔다가 끊겼는가
   };
-  var subs = [], watchId = null;
+  var subs = [], watchId = null, permStatus = null;
 
   function emit() { for (var i = 0; i < subs.length; i++) subs[i](st); }
 
+  /* 마지막 좌표를 받은 지 얼마나 됐는가 (초). 없으면 null. */
+  function age() { return st.ts ? (Date.now() - st.ts) / 1000 : null; }
+
+  /* 좌표가 오래됐으면 지켜보기가 멈춘 것이다 — 화면을 벗어났다 돌아왔을 때
+     흔히 그렇게 된다. */
+  function stale(limit) { var a = age(); return a != null && a > (limit || 60); }
+
+  /* 권한 상태를 지속적으로 지켜본다. Permissions API 가 없으면 unknown 으로
+     두고, 좌표가 들어오는지 여부로만 판단한다. */
+  function watchPermission() {
+    if (!navigator.permissions || !navigator.permissions.query) return;
+    try {
+      navigator.permissions.query({ name: 'geolocation' }).then(function (p) {
+        permStatus = p;
+        st.perm = p.state;
+        emit();
+        p.onchange = function () {
+          var was = st.perm;
+          st.perm = p.state;
+          if (p.state !== 'granted' && was === 'granted') {
+            st.ok = false; st.lost = true;
+            st.err = '위치 권한이 회수되었습니다';
+          }
+          if (p.state === 'granted' && was !== 'granted') {
+            st.err = null; st.lost = false;
+            start();
+          }
+          emit();
+        };
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
   function accept(p) {
-    st.ok = true; st.err = null; st.manual = false;
+    st.ok = true; st.err = null; st.manual = false; st.lost = false;
     st.lat = p.coords.latitude; st.lon = p.coords.longitude;
     st.alt = (p.coords.altitude != null && isFinite(p.coords.altitude)) ? p.coords.altitude : 0;
     st.acc = p.coords.accuracy;
     st.ts = Date.now();
+    st.fixes++;
+    if (st.perm === 'unknown' || st.perm === 'prompt') st.perm = 'granted';
     emit();
   }
 
   function fail(e) {
-    st.err = e && e.code === 1 ? '위치 권한이 거부되었습니다'
-           : e && e.code === 3 ? '위치를 얻는 데 시간이 너무 오래 걸립니다'
-           : '위치를 확인할 수 없습니다';
+    if (e && e.code === 1) { st.perm = 'denied'; st.err = '위치 권한이 거부되었습니다'; }
+    else if (e && e.code === 3) st.err = '위치를 얻는 데 시간이 너무 오래 걸립니다';
+    else st.err = '위치를 확인할 수 없습니다';
+    if (st.ok) st.lost = true;
     emit();
   }
 
@@ -1133,12 +1197,27 @@ var Position = (function () {
       st.err = '이 브라우저는 위치 기능을 지원하지 않습니다'; emit();
       return Promise.reject(new Error(st.err));
     }
+    watchPermission();
     return new Promise(function (res, rej) {
       navigator.geolocation.getCurrentPosition(function (p) {
         accept(p); watch(); res(st);
       }, function (e) {
         fail(e); watch(); rej(new Error(st.err));
       }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+    });
+  }
+
+  /* 사용자가 직접 다시 잡아 달라고 할 때. 지켜보기가 멈춰 있으면 다시 건다. */
+  function refresh() {
+    if (!navigator.geolocation) return Promise.reject(new Error('위치 기능이 없습니다'));
+    watchPermission();
+    return new Promise(function (res, rej) {
+      navigator.geolocation.getCurrentPosition(function (p) {
+        accept(p);
+        if (!st.watching) watch();
+        res(st);
+      }, function (e) { fail(e); rej(new Error(st.err)); },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
     });
   }
 
@@ -1162,7 +1241,8 @@ var Position = (function () {
     emit();
   }
 
-  return { state: st, start: start, stop: stop, set: set,
+  return { state: st, start: start, stop: stop, set: set, refresh: refresh,
+           age: age, stale: stale,
            on: function (f) { subs.push(f); } };
 })();
 
@@ -1857,9 +1937,16 @@ var Source = (function () {
 
   /* 같은 출처 중계는 사유를 본문에 담아 준다. 상태 코드만 보고 넘기면
      "상류 어디가 왜 안 됐는지" 를 통째로 버리는 셈이다. */
-  function selfHint(status, body) {
+  function selfHint(status, body, text) {
     if (status === 404) {
       return '중계 함수가 배포되지 않았습니다 — 정적 호스팅이거나 api/ 가 함수로 잡히지 않았습니다';
+    }
+    /* Vercel 의 Deployment Protection 이 켜져 있으면 페이지도 함수도 로그인
+       벽 뒤로 들어간다. 브라우저에는 401 이나 로그인 HTML 이 돌아온다. */
+    if (status === 401 || status === 403 || isLoginWall(text)) {
+      return '배포처에 로그인 보호가 걸려 있습니다 — Vercel 이면 ' +
+             'Settings → Deployment Protection 을 끄거나, 보호되지 않는 ' +
+             '프로덕션 주소로 여세요';
     }
     if (status === 500) {
       return '중계 함수가 실행 중 죽었습니다 — 배포처의 함수 로그를 확인하세요';
@@ -1869,6 +1956,14 @@ var Source = (function () {
     }
     if (body && body.error) return String(body.error);
     return null;
+  }
+
+  /* JSON 을 기대했는데 HTML 이 오면 십중팔구 로그인·차단 페이지다 */
+  function isLoginWall(text) {
+    if (!text) return false;
+    var t = String(text).slice(0, 800).toLowerCase();
+    if (t.indexOf('<!doctype') < 0 && t.indexOf('<html') < 0) return false;
+    return /vercel|authenticat|sign in|log ?in|sso|protection/.test(t);
   }
 
   function probe(name, url, parse) {
@@ -1882,21 +1977,30 @@ var Source = (function () {
     return fetch(url, { signal: ctl ? ctl.signal : undefined, cache: 'no-store',
                         headers: { 'Accept': 'application/json' } })
       .then(function (res) {
-        if (res.ok) return res.json().then(function (j) { return { ok: true, json: j }; });
+        if (res.ok) {
+          /* 200 인데 JSON 이 아닌 경우가 있다 — 로그인 페이지가 그렇다 */
+          return res.text().then(function (t) {
+            try { return { ok: true, json: JSON.parse(t) }; }
+            catch (e) { return { ok: false, status: 200, body: null, text: t }; }
+          });
+        }
         /* 실패해도 본문을 읽어 본다 — 우리 함수라면 사유가 들어 있다 */
         return res.text().then(function (t) {
           var body = null;
           try { body = JSON.parse(t); } catch (e) {}
-          return { ok: false, status: res.status, body: body };
-        }, function () { return { ok: false, status: res.status, body: null }; });
+          return { ok: false, status: res.status, body: body, text: t };
+        }, function () { return { ok: false, status: res.status, body: null, text: '' }; });
       })
       .then(function (r) {
         clearTimeout(to);
         if (r.ok) return { name: name, url: url, ok: true, ms: ms(), n: parse ? parse(r.json) : null };
+        var wall = isLoginWall(r.text);
         var w = why(new Error('HTTP ' + r.status), url);
-        var hint = (isSelf ? selfHint(r.status, r.body) : null) ||
+        var hint = (isSelf ? selfHint(r.status, r.body, r.text) : null) ||
+                   (wall ? '로그인·차단 페이지가 돌아왔습니다 (JSON 이 아님)' : null) ||
                    (r.body && r.body.error ? String(r.body.error) : null) || w.hint;
-        return { name: name, url: url, ok: false, ms: ms(), t: 'HTTP ' + r.status, hint: hint };
+        var tag = wall && r.status === 200 ? '로그인 벽' : 'HTTP ' + r.status;
+        return { name: name, url: url, ok: false, ms: ms(), t: tag, hint: hint };
       })
       .catch(function (e) {
         clearTimeout(to);
@@ -3063,9 +3167,17 @@ var UI = (function () {
     var p = Position.state, o = Orient.state, s = Source.state;
     var chips = [];
 
-    if (!p.ok) chips.push(['bad', '위치 없음']);
-    else if (p.manual) chips.push(['warn', '위치 수동']);
-    else chips.push(['', '±' + (p.acc != null ? Math.round(p.acc) : '?') + ' m']);
+    if (!p.ok) {
+      chips.push(['bad', p.perm === 'denied' ? '위치 권한 거부됨 — 눌러서 확인'
+                       : p.lost ? '위치 끊김 — 눌러서 확인'
+                       : '위치 확인 중']);
+    } else if (p.manual) {
+      chips.push(['warn', '위치 수동']);
+    } else if (Position.stale(90)) {
+      chips.push(['warn', '위치 ' + Geo.fmtAge(Position.age()) + ' — 눌러서 갱신']);
+    } else {
+      chips.push(['', '±' + (p.acc != null ? Math.round(p.acc) : '?') + ' m']);
+    }
 
     if (Orient.stale()) chips.push(['bad', '방향 센서 없음']);
     else if (!o.absolute) chips.push(['warn', '방위 미보정']);
@@ -3341,7 +3453,33 @@ var UI = (function () {
       return '<label class="sw"><input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '><i></i></label>';
     }
 
+    var pos = Position.state;
+    var permTxt = pos.perm === 'granted' ? '허용됨'
+                : pos.perm === 'denied' ? '거부됨'
+                : pos.perm === 'prompt' ? '아직 묻지 않음' : '확인 불가';
+    var permCls = pos.perm === 'granted' ? 'good' : pos.perm === 'denied' ? 'bad' : 'warn';
+
     el.body.innerHTML =
+      '<div class="sechead">현재 위치 기준</div>' +
+      '<div class="pos">' +
+        '<div class="pos-c">' + esc(Geo.fmtLatLon(pos.lat, pos.lon)) + '</div>' +
+        '<div class="pos-g">' +
+          '<span><k>권한</k><b class="' + permCls + '">' + esc(permTxt) + '</b></span>' +
+          '<span><k>정확도</k><b>' + (pos.acc != null ? '±' + Math.round(pos.acc) + ' m' : '—') + '</b></span>' +
+          '<span><k>갱신</k><b>' + esc(pos.ok ? Geo.fmtAge(Position.age()) : '—') + '</b></span>' +
+          '<span><k>받은 좌표</k><b>' + pos.fixes + '개</b></span>' +
+          '<span><k>고도</k><b>' + (pos.alt ? Math.round(pos.alt) + ' m' : '—') + '</b></span>' +
+          '<span><k>지켜보기</k><b>' + (pos.watching ? '켜짐' : '꺼짐') + '</b></span>' +
+        '</div>' +
+        (pos.err ? '<div class="pos-e">' + esc(pos.err) + '</div>' : '') +
+        (pos.perm === 'denied'
+          ? '<div class="pos-e">브라우저 주소창의 자물쇠(또는 ⓘ)를 눌러 이 사이트의 ' +
+            '위치 권한을 허용으로 바꾼 뒤 다시 잡아 주세요.</div>' : '') +
+        '<div class="pos-b">' +
+          '<button class="btn sm" id="bPosFix">위치 다시 잡기</button>' +
+          '<button class="btn sm" id="bPosCopy">좌표 복사</button>' +
+        '</div>' +
+      '</div>' +
       '<div class="sechead">보기</div>' +
       row('단위', '거리·고도·속도 표기', '<div class="seg" id="unitSeg">' +
         '<button data-v="1"' + (c.metric ? ' class="on"' : '') + '>미터법</button>' +
@@ -3456,6 +3594,28 @@ var UI = (function () {
     var p = document.getElementById('setProv');
     if (p) p.onchange = function () { Source.setProvider(parseInt(p.value, 10)); App.save(); };
 
+    var pf = document.getElementById('bPosFix');
+    if (pf) pf.onclick = function () {
+      pf.disabled = true; pf.textContent = '잡는 중…';
+      Position.refresh().then(function (s) {
+        toast('위치를 다시 잡았습니다 — ±' + Math.round(s.acc) + ' m');
+        paint(App.state, true);
+      }).catch(function (e) {
+        toast((e && e.message) || '위치를 잡지 못했습니다', 'bad');
+        paint(App.state, true);
+      });
+    };
+    var pc = document.getElementById('bPosCopy');
+    if (pc) pc.onclick = function () {
+      var s = Position.state;
+      if (!s.ok) return toast('아직 위치가 없습니다', 'warn');
+      var txt = s.lat.toFixed(6) + ', ' + s.lon.toFixed(6);
+      var done = function () { toast('좌표를 복사했습니다: ' + txt); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(done, function () { fallback(txt, done); });
+      } else fallback(txt, done);
+    };
+
     var dg = document.getElementById('bDiag');
     if (dg) dg.onclick = function () { runDiag(dg); };
 
@@ -3533,7 +3693,27 @@ var UI = (function () {
 
       out.innerHTML = '<div class="diag">' +
         '<div class="diag-h">' + head + '</div>' + move + rows + csp +
-        '<div class="diag-e">' + env + '</div></div>';
+        '<div class="diag-e">' + env + '</div>' +
+        '<button class="btn sm" id="bCopyDiag" style="margin-top:9px;width:100%">결과 복사</button>' +
+        '</div>';
+
+      /* 한 줄씩 옮겨 적다 보면 정작 필요한 줄이 빠진다 — 통째로 복사해 준다 */
+      var cp = document.getElementById('bCopyDiag');
+      if (cp) cp.onclick = function () {
+        var txt = ['Fly 연결 점검  ' + App.BUILD,
+                   e.origin + '  ' + (e.secure ? 'secure' : 'insecure') +
+                   '  ' + (e.online ? 'online' : 'offline')];
+        d.providers.forEach(function (r) {
+          txt.push((r.ok ? '[정상] ' : '[' + r.t + '] ') + r.tpl +
+                   (r.ok ? '  ' + r.n + '대 ' + r.ms + 'ms' : '  ' + (r.hint || '')));
+        });
+        if (e.csp.length) txt.push('CSP 차단: ' + e.csp.join(', '));
+        var body = txt.join('\n');
+        var done = function () { toast('결과를 복사했습니다 — 붙여넣어 보내주세요'); };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(body).then(done, function () { fallback(body, done); });
+        } else fallback(body, done);
+      };
 
       /* 살아 있는 곳을 찾았으면 바로 갈아탈 수 있게 한다 */
       out.onclick = function (ev) {
@@ -3552,6 +3732,29 @@ var UI = (function () {
     });
   }
 
+  /* clipboard API 가 막힌 브라우저를 위한 최후 수단 */
+  function fallback(text, done) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand && document.execCommand('copy');
+      ta.remove();
+      if (ok) return done();
+    } catch (err) {}
+    /* 그래도 안 되면 눈으로 읽어 갈 수 있게 펼쳐 둔다 */
+    var pre = document.createElement('pre');
+    pre.textContent = text;
+    pre.style.cssText = 'white-space:pre-wrap;word-break:break-all;font-size:10.5px;' +
+      'margin-top:8px;padding:9px;border-radius:6px;background:var(--panel-3);' +
+      'border:1px solid var(--line);color:var(--ink-2);user-select:text';
+    var out = document.getElementById('diagOut');
+    if (out) out.appendChild(pre);
+    toast('복사가 막혀 있어 아래에 펼쳤습니다 — 길게 눌러 복사하세요', 'warn');
+  }
+
   return { init: init, toast: toast, status: status, open: open, close: close,
            toggle: toggle, current: current, paint: paint, esc: esc };
 })();
@@ -3564,7 +3767,7 @@ var App = (function () {
 
   /* 빌드 표시 — build.py 가 채워 넣는다. 배포된 것이 어느 빌드인지
      화면에서 바로 확인할 수 있어야 "올리긴 했나" 를 두고 헤매지 않는다. */
-  var BUILD = '2026-08-30 23:08 3b8adf2d';
+  var BUILD = '2026-08-30 23:20 761593fc';
 
   var cfg = {
     metric: true,
@@ -3899,7 +4102,7 @@ var App = (function () {
     };
     /* 빨간 상태 칩을 누르면 바로 점검 화면으로 — 거기서 손쓸 수 있다 */
     document.getElementById('stat').onclick = function (e) {
-      if (e.target.closest('.chip.bad')) UI.open('settings');
+      if (e.target.closest('.chip.bad') || e.target.closest('.chip.warn')) UI.open('settings');
     };
     document.getElementById('bList').onclick = function () { UI.toggle('list'); };
     document.getElementById('bSet').onclick = function () { UI.toggle('settings'); };
@@ -3970,8 +4173,14 @@ var App = (function () {
     window.addEventListener('resize', function () { Render.resize(); });
     if (window.visualViewport) window.visualViewport.addEventListener('resize', function () { Render.resize(); });
     document.addEventListener('visibilitychange', function () {
-      if (document.hidden) { pause(); wakeOff(); }
-      else { resume(); wakeOn(); Source.fetchOnce(); }
+      if (document.hidden) { pause(); wakeOff(); return; }
+      resume(); wakeOn();
+      /* 화면을 벗어나 있는 동안 지켜보기가 멈추는 기기가 많다.
+         돌아왔는데 좌표가 오래됐으면 조용히 다시 잡는다. */
+      if (state.started && !Source.state.demo && Position.stale(45)) {
+        Position.refresh().catch(function () {});
+      }
+      Source.fetchOnce();
     });
 
     /* 데스크톱 키보드 */
@@ -4020,8 +4229,18 @@ var App = (function () {
     bind();
     syncButtons();
 
+    /* 위치가 끊기면 화면의 모든 계산이 근거를 잃는다 — 조용히 넘어가면 안 된다 */
+    var hadFix = false, warned = '';
     Position.on(function (p) {
       if (p.ok && !Source.state.demo && !Source.state.lastOk) Source.fetchOnce();
+      if (p.ok) { hadFix = true; if (warned) { UI.toast('위치를 다시 잡았습니다'); warned = ''; } }
+      else if (hadFix && state.started) {
+        var why = p.perm === 'denied' ? '위치 권한이 회수되었습니다' : (p.err || '위치가 끊겼습니다');
+        if (warned !== why) {
+          warned = why;
+          UI.toast(why + ' — 설정에서 다시 잡아 주세요', 'bad');
+        }
+      }
     });
 
     resume();

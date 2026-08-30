@@ -341,7 +341,7 @@ var App = (function () {
     };
     /* 빨간 상태 칩을 누르면 바로 점검 화면으로 — 거기서 손쓸 수 있다 */
     document.getElementById('stat').onclick = function (e) {
-      if (e.target.closest('.chip.bad')) UI.open('settings');
+      if (e.target.closest('.chip.bad') || e.target.closest('.chip.warn')) UI.open('settings');
     };
     document.getElementById('bList').onclick = function () { UI.toggle('list'); };
     document.getElementById('bSet').onclick = function () { UI.toggle('settings'); };
@@ -412,8 +412,14 @@ var App = (function () {
     window.addEventListener('resize', function () { Render.resize(); });
     if (window.visualViewport) window.visualViewport.addEventListener('resize', function () { Render.resize(); });
     document.addEventListener('visibilitychange', function () {
-      if (document.hidden) { pause(); wakeOff(); }
-      else { resume(); wakeOn(); Source.fetchOnce(); }
+      if (document.hidden) { pause(); wakeOff(); return; }
+      resume(); wakeOn();
+      /* 화면을 벗어나 있는 동안 지켜보기가 멈추는 기기가 많다.
+         돌아왔는데 좌표가 오래됐으면 조용히 다시 잡는다. */
+      if (state.started && !Source.state.demo && Position.stale(45)) {
+        Position.refresh().catch(function () {});
+      }
+      Source.fetchOnce();
     });
 
     /* 데스크톱 키보드 */
@@ -462,8 +468,18 @@ var App = (function () {
     bind();
     syncButtons();
 
+    /* 위치가 끊기면 화면의 모든 계산이 근거를 잃는다 — 조용히 넘어가면 안 된다 */
+    var hadFix = false, warned = '';
     Position.on(function (p) {
       if (p.ok && !Source.state.demo && !Source.state.lastOk) Source.fetchOnce();
+      if (p.ok) { hadFix = true; if (warned) { UI.toast('위치를 다시 잡았습니다'); warned = ''; } }
+      else if (hadFix && state.started) {
+        var why = p.perm === 'denied' ? '위치 권한이 회수되었습니다' : (p.err || '위치가 끊겼습니다');
+        if (warned !== why) {
+          warned = why;
+          UI.toast(why + ' — 설정에서 다시 잡아 주세요', 'bad');
+        }
+      }
     });
 
     resume();

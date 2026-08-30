@@ -469,9 +469,16 @@ var Source = (function () {
 
   /* 같은 출처 중계는 사유를 본문에 담아 준다. 상태 코드만 보고 넘기면
      "상류 어디가 왜 안 됐는지" 를 통째로 버리는 셈이다. */
-  function selfHint(status, body) {
+  function selfHint(status, body, text) {
     if (status === 404) {
       return '중계 함수가 배포되지 않았습니다 — 정적 호스팅이거나 api/ 가 함수로 잡히지 않았습니다';
+    }
+    /* Vercel 의 Deployment Protection 이 켜져 있으면 페이지도 함수도 로그인
+       벽 뒤로 들어간다. 브라우저에는 401 이나 로그인 HTML 이 돌아온다. */
+    if (status === 401 || status === 403 || isLoginWall(text)) {
+      return '배포처에 로그인 보호가 걸려 있습니다 — Vercel 이면 ' +
+             'Settings → Deployment Protection 을 끄거나, 보호되지 않는 ' +
+             '프로덕션 주소로 여세요';
     }
     if (status === 500) {
       return '중계 함수가 실행 중 죽었습니다 — 배포처의 함수 로그를 확인하세요';
@@ -481,6 +488,14 @@ var Source = (function () {
     }
     if (body && body.error) return String(body.error);
     return null;
+  }
+
+  /* JSON 을 기대했는데 HTML 이 오면 십중팔구 로그인·차단 페이지다 */
+  function isLoginWall(text) {
+    if (!text) return false;
+    var t = String(text).slice(0, 800).toLowerCase();
+    if (t.indexOf('<!doctype') < 0 && t.indexOf('<html') < 0) return false;
+    return /vercel|authenticat|sign in|log ?in|sso|protection/.test(t);
   }
 
   function probe(name, url, parse) {
@@ -494,21 +509,30 @@ var Source = (function () {
     return fetch(url, { signal: ctl ? ctl.signal : undefined, cache: 'no-store',
                         headers: { 'Accept': 'application/json' } })
       .then(function (res) {
-        if (res.ok) return res.json().then(function (j) { return { ok: true, json: j }; });
+        if (res.ok) {
+          /* 200 인데 JSON 이 아닌 경우가 있다 — 로그인 페이지가 그렇다 */
+          return res.text().then(function (t) {
+            try { return { ok: true, json: JSON.parse(t) }; }
+            catch (e) { return { ok: false, status: 200, body: null, text: t }; }
+          });
+        }
         /* 실패해도 본문을 읽어 본다 — 우리 함수라면 사유가 들어 있다 */
         return res.text().then(function (t) {
           var body = null;
           try { body = JSON.parse(t); } catch (e) {}
-          return { ok: false, status: res.status, body: body };
-        }, function () { return { ok: false, status: res.status, body: null }; });
+          return { ok: false, status: res.status, body: body, text: t };
+        }, function () { return { ok: false, status: res.status, body: null, text: '' }; });
       })
       .then(function (r) {
         clearTimeout(to);
         if (r.ok) return { name: name, url: url, ok: true, ms: ms(), n: parse ? parse(r.json) : null };
+        var wall = isLoginWall(r.text);
         var w = why(new Error('HTTP ' + r.status), url);
-        var hint = (isSelf ? selfHint(r.status, r.body) : null) ||
+        var hint = (isSelf ? selfHint(r.status, r.body, r.text) : null) ||
+                   (wall ? '로그인·차단 페이지가 돌아왔습니다 (JSON 이 아님)' : null) ||
                    (r.body && r.body.error ? String(r.body.error) : null) || w.hint;
-        return { name: name, url: url, ok: false, ms: ms(), t: 'HTTP ' + r.status, hint: hint };
+        var tag = wall && r.status === 200 ? '로그인 벽' : 'HTTP ' + r.status;
+        return { name: name, url: url, ok: false, ms: ms(), t: tag, hint: hint };
       })
       .catch(function (e) {
         clearTimeout(to);

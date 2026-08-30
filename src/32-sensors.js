@@ -7,25 +7,64 @@
 var Position = (function () {
   var st = {
     ok: false, lat: null, lon: null, alt: 0, acc: null,
-    ts: 0, err: null, watching: false, manual: false
+    ts: 0, err: null, watching: false, manual: false,
+    perm: 'unknown',        // granted | prompt | denied | unknown
+    fixes: 0,               // 지금까지 받은 좌표 개수
+    lost: false             // 한 번 잡혔다가 끊겼는가
   };
-  var subs = [], watchId = null;
+  var subs = [], watchId = null, permStatus = null;
 
   function emit() { for (var i = 0; i < subs.length; i++) subs[i](st); }
 
+  /* 마지막 좌표를 받은 지 얼마나 됐는가 (초). 없으면 null. */
+  function age() { return st.ts ? (Date.now() - st.ts) / 1000 : null; }
+
+  /* 좌표가 오래됐으면 지켜보기가 멈춘 것이다 — 화면을 벗어났다 돌아왔을 때
+     흔히 그렇게 된다. */
+  function stale(limit) { var a = age(); return a != null && a > (limit || 60); }
+
+  /* 권한 상태를 지속적으로 지켜본다. Permissions API 가 없으면 unknown 으로
+     두고, 좌표가 들어오는지 여부로만 판단한다. */
+  function watchPermission() {
+    if (!navigator.permissions || !navigator.permissions.query) return;
+    try {
+      navigator.permissions.query({ name: 'geolocation' }).then(function (p) {
+        permStatus = p;
+        st.perm = p.state;
+        emit();
+        p.onchange = function () {
+          var was = st.perm;
+          st.perm = p.state;
+          if (p.state !== 'granted' && was === 'granted') {
+            st.ok = false; st.lost = true;
+            st.err = '위치 권한이 회수되었습니다';
+          }
+          if (p.state === 'granted' && was !== 'granted') {
+            st.err = null; st.lost = false;
+            start();
+          }
+          emit();
+        };
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
   function accept(p) {
-    st.ok = true; st.err = null; st.manual = false;
+    st.ok = true; st.err = null; st.manual = false; st.lost = false;
     st.lat = p.coords.latitude; st.lon = p.coords.longitude;
     st.alt = (p.coords.altitude != null && isFinite(p.coords.altitude)) ? p.coords.altitude : 0;
     st.acc = p.coords.accuracy;
     st.ts = Date.now();
+    st.fixes++;
+    if (st.perm === 'unknown' || st.perm === 'prompt') st.perm = 'granted';
     emit();
   }
 
   function fail(e) {
-    st.err = e && e.code === 1 ? '위치 권한이 거부되었습니다'
-           : e && e.code === 3 ? '위치를 얻는 데 시간이 너무 오래 걸립니다'
-           : '위치를 확인할 수 없습니다';
+    if (e && e.code === 1) { st.perm = 'denied'; st.err = '위치 권한이 거부되었습니다'; }
+    else if (e && e.code === 3) st.err = '위치를 얻는 데 시간이 너무 오래 걸립니다';
+    else st.err = '위치를 확인할 수 없습니다';
+    if (st.ok) st.lost = true;
     emit();
   }
 
@@ -35,12 +74,27 @@ var Position = (function () {
       st.err = '이 브라우저는 위치 기능을 지원하지 않습니다'; emit();
       return Promise.reject(new Error(st.err));
     }
+    watchPermission();
     return new Promise(function (res, rej) {
       navigator.geolocation.getCurrentPosition(function (p) {
         accept(p); watch(); res(st);
       }, function (e) {
         fail(e); watch(); rej(new Error(st.err));
       }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+    });
+  }
+
+  /* 사용자가 직접 다시 잡아 달라고 할 때. 지켜보기가 멈춰 있으면 다시 건다. */
+  function refresh() {
+    if (!navigator.geolocation) return Promise.reject(new Error('위치 기능이 없습니다'));
+    watchPermission();
+    return new Promise(function (res, rej) {
+      navigator.geolocation.getCurrentPosition(function (p) {
+        accept(p);
+        if (!st.watching) watch();
+        res(st);
+      }, function (e) { fail(e); rej(new Error(st.err)); },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
     });
   }
 
@@ -64,7 +118,8 @@ var Position = (function () {
     emit();
   }
 
-  return { state: st, start: start, stop: stop, set: set,
+  return { state: st, start: start, stop: stop, set: set, refresh: refresh,
+           age: age, stale: stale,
            on: function (f) { subs.push(f); } };
 })();
 
