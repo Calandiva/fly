@@ -5,9 +5,11 @@
  * 두는 편이 낫다 — 상류가 정책을 바꿔도 한 곳만 고치면 된다.
  *
  *   POST /api/route   { "planes": [{ "callsign": "KAL086", "lat": 0, "lng": 0 }] }
+ *
+ * 저장소에 package.json 이 없으므로 .js 는 CommonJS 로 해석된다.
  */
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -37,4 +39,4 @@ export default async function handler(req, res) {
     clearTimeout(timer);
     return res.status(502).json({ error: e.name === 'AbortError' ? '시간 초과' : (e.message || '실패') });
   }
-}
+};

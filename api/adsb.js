@@ -9,6 +9,9 @@
  * 사용자 좌표는 이 배포본 밖의 제3자를 거치지 않는다.
  *
  *   GET /api/adsb?lat=37.5665&lon=126.978&nm=120
+ *
+ * 저장소에 package.json 이 없으므로 .js 는 CommonJS 로 해석된다.
+ * ESM 문법(export default)을 쓰면 함수가 뜨기도 전에 죽는다.
  */
 
 const UPSTREAM = [
@@ -25,7 +28,7 @@ const num = (v, lo, hi, dflt) => {
   return Number.isFinite(n) && n >= lo && n <= hi ? n : dflt;
 };
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   if (req.method === 'OPTIONS') return res.status(204).end();
@@ -66,4 +69,4 @@ export default async function handler(req, res) {
 
   res.setHeader('Cache-Control', 'no-store');
   return res.status(502).json({ error: '상류 공급자에 닿지 못했습니다', tried });
-}
+};

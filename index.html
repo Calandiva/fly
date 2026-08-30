@@ -1829,6 +1829,22 @@ var Source = (function () {
     return { t: '실패', hint: m || '알 수 없는 오류' };
   }
 
+  /* 같은 출처 중계는 사유를 본문에 담아 준다. 상태 코드만 보고 넘기면
+     "상류 어디가 왜 안 됐는지" 를 통째로 버리는 셈이다. */
+  function selfHint(status, body) {
+    if (status === 404) {
+      return '중계 함수가 배포되지 않았습니다 — 정적 호스팅이거나 api/ 가 함수로 잡히지 않았습니다';
+    }
+    if (status === 500) {
+      return '중계 함수가 실행 중 죽었습니다 — 배포처의 함수 로그를 확인하세요';
+    }
+    if (status === 502 && body && body.tried) {
+      return '중계는 살아 있는데 상류가 전부 실패했습니다 — ' + body.tried.join(' / ');
+    }
+    if (body && body.error) return String(body.error);
+    return null;
+  }
+
   function probe(name, url, parse) {
     var t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
@@ -1836,20 +1852,34 @@ var Source = (function () {
     var ms = function () {
       return Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0);
     };
+    var isSelf = url.indexOf('/') === 0;
     return fetch(url, { signal: ctl ? ctl.signal : undefined, cache: 'no-store',
                         headers: { 'Accept': 'application/json' } })
       .then(function (res) {
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.json();
+        if (res.ok) return res.json().then(function (j) { return { ok: true, json: j }; });
+        /* 실패해도 본문을 읽어 본다 — 우리 함수라면 사유가 들어 있다 */
+        return res.text().then(function (t) {
+          var body = null;
+          try { body = JSON.parse(t); } catch (e) {}
+          return { ok: false, status: res.status, body: body };
+        }, function () { return { ok: false, status: res.status, body: null }; });
       })
-      .then(function (json) {
+      .then(function (r) {
         clearTimeout(to);
-        return { name: name, url: url, ok: true, ms: ms(), n: parse ? parse(json) : null };
+        if (r.ok) return { name: name, url: url, ok: true, ms: ms(), n: parse ? parse(r.json) : null };
+        var w = why(new Error('HTTP ' + r.status), url);
+        var hint = (isSelf ? selfHint(r.status, r.body) : null) ||
+                   (r.body && r.body.error ? String(r.body.error) : null) || w.hint;
+        return { name: name, url: url, ok: false, ms: ms(), t: 'HTTP ' + r.status, hint: hint };
       })
       .catch(function (e) {
         clearTimeout(to);
         var w = why(e, url);
-        return { name: name, url: url, ok: false, ms: ms(), t: w.t, hint: w.hint };
+        var hint = w.hint;
+        if (isSelf && w.t === '연결 실패') {
+          hint = '중계 함수에 닿지 못했습니다 — 배포가 끝나지 않았거나 경로가 다릅니다';
+        }
+        return { name: name, url: url, ok: false, ms: ms(), t: w.t, hint: hint };
       });
   }
 
@@ -3464,7 +3494,7 @@ var App = (function () {
 
   /* 빌드 표시 — build.py 가 채워 넣는다. 배포된 것이 어느 빌드인지
      화면에서 바로 확인할 수 있어야 "올리긴 했나" 를 두고 헤매지 않는다. */
-  var BUILD = '2026-08-28 09:56 74bbb4a+';
+  var BUILD = '2026-08-30 22:23 daacb4c+';
 
   var cfg = {
     metric: true,
