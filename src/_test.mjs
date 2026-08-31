@@ -8,6 +8,7 @@
  *   node src/_test.mjs [url]
  *
  * 하늘 배경으로 카메라 모드까지 보려면 먼저 node src/_sky.mjs sky.y4m
+ * 크로미움이 기본 위치에 없으면 PW_EXE 로 실행 파일을 지정합니다.
  */
 import { chromium } from 'playwright';
 import fs from 'fs';
@@ -25,7 +26,7 @@ const head = t => console.log('\n' + t);
 const args = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'];
 if (fs.existsSync(SKY)) args.push('--use-file-for-fake-video-capture=' + fs.realpathSync(SKY));
 
-const browser = await chromium.launch({ args });
+const browser = await chromium.launch({ args, executablePath: process.env.PW_EXE || undefined });
 
 async function open(vp, mobile) {
   const c = await browser.newContext({
@@ -81,17 +82,48 @@ head('데모 흐름');
   ok('목록이 표시 거리를 따른다', filt.rows === filt.within,
      `목록 ${filt.rows} / 반경내 ${filt.within} / 전체 ${filt.all}`);
 
-  /* 화각을 손으로 맞춰도 자동 추정이 덮어쓰던 결함 */
+  /* 화각 슬라이더는 "눈에 보이는 가로 화각" 을 직접 잡는다.
+     사람이 확인할 수 있는 값이어야 맞출 수 있기 때문. */
   const fov = await p.evaluate(async () => {
-    App.cfg.fovAuto = true;
     UI.open('settings');
     await new Promise(r => setTimeout(r, 400));
     const n = document.getElementById('setFov');
     n.value = 44; n.dispatchEvent(new Event('input'));
     await new Promise(r => setTimeout(r, 200));
-    return { fov: App.cfg.fov, auto: App.cfg.fovAuto };
+    return { h: View.hFov(), saved: App.cfg.fovLong, long: View.state.fovLong };
   });
-  ok('화각을 만지면 자동 추정이 꺼진다', fov.auto === false && fov.fov === 44);
+  ok('화각을 만지면 보이는 가로 화각이 그 값이 된다',
+     Math.abs(fov.h - 44) < 0.6 && Math.abs(fov.saved - fov.long) < 0.01,
+     `보이는 ${fov.h.toFixed(1)}° · 저장 긴축 ${fov.saved.toFixed(1)}°`);
+
+  /* 화면을 돌리면 영상의 가로·세로가 뒤바뀐다. 그때 화각을 "영상 가로
+     기준" 으로 들고 있으면 초점거리가 두 배 가까이 틀어져, 한 번 맞춰 둔
+     보정이 무너지고 조금만 돌려도 비행기가 엉뚱한 곳에 섰다.
+     기준을 렌즈의 긴 축으로 잡으면 돌려도 같은 렌즈로 남는다. */
+  const relens = await p.evaluate(() => {
+    View.setFov(67);
+    View.video(1080, 1920);
+    const port = { f: View.state.f, fov: View.state.fov, long: View.state.fovLong };
+    View.video(1920, 1080);
+    const land = { f: View.state.f, fov: View.state.fov, long: View.state.fovLong };
+    /* 세로 화면(414×896)에서 세로 영상은 세로가 꽉 차고, 가로 영상은
+       가로가 잘린다. 초점거리는 달라도 렌즈(긴 축 화각)는 같아야 한다. */
+    return { port, land };
+  });
+  ok('화면을 돌려도 렌즈 화각은 그대로',
+     Math.abs(relens.port.long - relens.land.long) < 0.01 &&
+     Math.abs(relens.port.f - relens.land.f) > 1,
+     `긴축 ${relens.port.long.toFixed(1)}° · f ${relens.port.f.toFixed(0)} → ${relens.land.f.toFixed(0)}`);
+
+  /* 세로 영상을 받으면 가로 시야가 20° 밑으로 떨어지지 않아야 한다.
+     한때 16:9 가로 영상을 세로 화면에 덮어 가로의 74% 를 잘라 냈고,
+     그 상태에서는 손을 조금만 돌려도 비행기가 화면 밖으로 나갔다. */
+  const wide = await p.evaluate(() => {
+    View.setFov(67); View.video(1080, 1920);
+    return { h: View.hFov(), v: View.vFov() };
+  });
+  ok('세로 화면에서 가로 시야가 충분하다', wide.h > 28,
+     `가로 ${wide.h.toFixed(0)}° 세로 ${wide.v.toFixed(0)}°`);
 
   /* 센서가 살아 있으면 Escape 가 먹지 않던 결함 */
   const esc = await p.evaluate(async () => {

@@ -213,8 +213,20 @@ var Render = (function () {
   /* 상단 방위 리본 */
   function compass(g, head, absolute) {
     var y = 62 + SAFE_T;                     // 상단 상태 칩 아래
-    var f = View.state.f, cxp = W / 2;
-    var half = Geo.deg(Math.atan((W / 2) / f));
+    var cxp = W / 2;
+    /* 눈금 자리는 반드시 비행기와 같은 방법으로 투영해야 한다.
+       f·tan(방위차) 는 폰을 수평으로 들었을 때만 맞는 식이라, 하늘을
+       올려다보면(고각 60~80°) 눈금과 비행기가 서로 다른 곳을 가리킨다.
+       화면 한가운데 높이(=지금 보고 있는 고각)에서 그대로 투영한다. */
+    /* 다만 천정 가까이에서는 방위 자체가 의미를 잃는다 — 고각 85° 의
+       작은 원 위에서는 N 도 S 도 화면 한가운데에 몰린다. 그래서 눈금을
+       놓는 고각은 55° 까지만 따라간다. 축에서 크게 벗어난 눈금은 접혀서
+       엉뚱한 자리에 서므로 아예 버린다. */
+    var elNow = Math.max(-55, Math.min(55, Orient.state.pitch));
+    var xOf = function (az) {
+      var p = View.project(Geo.norm360(az), elNow);
+      return (p.front && p.depth > 0.32) ? p.x : null;
+    };
     g.save();
     g.beginPath(); g.rect(0, y - 20, W, 34); g.clip();
 
@@ -222,12 +234,12 @@ var Render = (function () {
       gg.beginPath(); gg.moveTo(0, y + 11); gg.lineTo(W, y + 11); gg.stroke();
     }, 0.9, 'rgba(120,240,180,.30)', 0.28);
 
-    var start = Math.ceil((head - half - 5) / 5) * 5;
-    for (var a = start; a <= head + half + 5; a += 5) {
+    var start = Math.ceil((head - 90) / 5) * 5;
+    for (var a = start; a <= head + 90; a += 5) {
       var diff = Geo.norm180(a - head);
       if (Math.abs(diff) > 88) continue;
-      var x = cxp + f * Math.tan(Geo.rad(diff));
-      if (x < -30 || x > W + 30) continue;
+      var x = xOf(a);
+      if (x == null || x < -30 || x > W + 30) continue;
       var az = Geo.norm360(a);
       var major = az % 45 === 0, mid = az % 15 === 0;
       var len = major ? 10 : mid ? 6 : 3.5;

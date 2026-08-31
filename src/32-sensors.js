@@ -138,11 +138,20 @@ var Camera = (function () {
       st.err = 'https 연결이 아니거나 카메라를 지원하지 않는 브라우저입니다';
       return Promise.reject(new Error(st.err));
     }
+    /* 화면이 세로인데 16:9 가로 영상을 받으면 object-fit:cover 가 좌우를
+       잘라 낸다. 1920×1080 을 414×896 뷰포트에 덮으면 가로의 74% 가
+       사라져 실제로 보이는 화각이 20° 도 안 된다 — 손을 조금만 돌려도
+       비행기가 화면 밖으로 나가 버리는 것이 이것이다.
+       그래서 뷰포트와 같은 방향·비율의 영상을 달라고 한다. */
+    var vp = viewport();
+    var portrait = vp.h >= vp.w;
     opening = navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
         facingMode: { ideal: 'environment' },
-        width: { ideal: 1920 }, height: { ideal: 1080 }
+        width: { ideal: portrait ? 1080 : 1920 },
+        height: { ideal: portrait ? 1920 : 1080 },
+        aspectRatio: { ideal: vp.w / vp.h }
       }
     }).then(function (s) {
       /* 여는 사이에 사용자가 카메라를 껐다면 새 스트림은 바로 접는다 */
@@ -184,14 +193,24 @@ var Camera = (function () {
     if (el) { el.srcObject = null; el.classList.add('off'); }
   }
 
-  /* 영상 비율로부터 그럴듯한 기본 수평화각을 고른다.
-     휴대폰 메인 카메라의 긴 축 화각은 대략 65~70° 이므로 거기에 맞춘다. */
-  function guessFov() {
-    if (!st.w || !st.h) return 67;
-    var longFov = 67;
-    if (st.w >= st.h) return longFov;
-    return Geo.deg(2 * Math.atan(Math.tan(Geo.rad(longFov) / 2) * st.w / st.h));
+  function viewport() {
+    return { w: window.innerWidth || 1, h: window.innerHeight || 1 };
   }
 
-  return { state: st, bind: bind, start: start, stop: stop, guessFov: guessFov };
+  /* 휴대폰 메인 카메라(1배)의 긴 축 화각은 대략 65~70°.
+     영상의 가로·세로는 화면을 돌리면 뒤바뀌지만 이 값은 그대로다. */
+  var LONG_FOV = 67;
+
+  /* 지금 붙어 있는 <video> 가 실제로 내보내는 크기. 화면을 돌리면 브라우저가
+     프레임도 함께 돌려 가로·세로가 뒤바뀌는데, 그때 예전 값을 그대로 쓰면
+     초점거리가 두 배 가까이 틀어진다. 그래서 매 프레임 싸게 확인한다. */
+  function dims() {
+    if (!el) return { w: 0, h: 0 };
+    var w = el.videoWidth || 0, h = el.videoHeight || 0;
+    if (w && h) { st.w = w; st.h = h; }
+    return { w: st.w, h: st.h };
+  }
+
+  return { state: st, bind: bind, start: start, stop: stop,
+           dims: dims, longFov: LONG_FOV };
 })();

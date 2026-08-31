@@ -21,7 +21,7 @@ var App = (function () {
     alertMin: 5,
     wake: true,
     demo: false,
-    fov: 67, fovAuto: true,
+    fovLong: 67,            // 렌즈의 긴 축 화각 — 화면을 돌려도 그대로다
     headingOffset: 0,
     tiltOffset: 0,          // 고각 보정 — 지평선이 어긋날 때
     maxNm: 60,              // AR 은 이보다 멀면 전부 지평선에 붙는다
@@ -127,7 +127,6 @@ var App = (function () {
       Camera.start().then(function (s) {
         dom.synth.classList.remove('on');
         View.video(s.w, s.h);
-        if (cfg.fovAuto) { cfg.fov = Camera.guessFov(); View.setFov(cfg.fov); }
       }).catch(function (e) {
         cfg.camera = false;
         dom.synth.classList.add('on');
@@ -153,7 +152,6 @@ var App = (function () {
       Camera.start().then(function (s) {
         dom.synth.classList.remove('on');
         View.video(s.w, s.h);
-        if (cfg.fovAuto) { cfg.fov = Camera.guessFov(); View.setFov(cfg.fov); }
       }).catch(function (e) {
         cfg.camera = false; dom.synth.classList.add('on');
         UI.toast(e.message, 'warn'); syncButtons();
@@ -162,7 +160,6 @@ var App = (function () {
       Camera.stop();
       dom.synth.classList.add('on');
       View.video(0, 0);
-      View.setFov(cfg.fov);
     }
     syncButtons();
   }
@@ -185,8 +182,18 @@ var App = (function () {
      붙잡은 것은 웬만하면 놓지 않는다 — 손이 조금 흔들릴 때마다 대상이
      바뀌면 읽을 수가 없다. */
   var AIM_DEG = 14;         // 이 안에 들어와야 겨냥으로 친다
-  var HOLD_DEG = 22;        // 한 번 잡으면 여기까지는 놓지 않는다
   var STICKY = 1.5;         // 다른 것이 이만큼 더 가까워야 갈아탄다
+
+  /* 영상 크기는 조용히 바뀐다 — 화면을 돌리면 브라우저가 프레임도 돌리고,
+     카메라가 해상도를 낮추기도 한다. 그때 초점거리를 다시 잡지 않으면
+     화면에 그리는 배율이 실제 영상과 어긋나, 조금만 움직여도 비행기가
+     엉뚱한 곳으로 가거나 화면 밖으로 나가 버린다. 매 프레임 확인한다. */
+  function syncLens() {
+    if (!Camera.state.on) return;
+    var d = Camera.dims();
+    if (!d.w || !d.h) return;
+    View.video(d.w, d.h);
+  }
 
   function pickAim(list) {
     var maxM = Geo.nmToM(cfg.maxNm);
@@ -199,12 +206,16 @@ var App = (function () {
       var p = View.project(a.az, a.el);
       if (!p.front) continue;
       a._sep = p.sep;
+      /* 놓는 기준을 고정된 각(22°)으로 두면, 화면 안에 뻔히 보이는데도
+         조금만 돌리면 겨냥이 풀려 정보가 사라진다. 화면 밖으로 나갈
+         때까지는 붙잡는다 — 사람이 보고 있는 것과 같은 기준이다. */
+      a._on = View.onScreen(p, -30);
       if (a.id === state.aimed) held = a;
       if (p.sep < bestSep) { bestSep = p.sep; best = a; }
     }
-    /* 붙잡고 있던 것이 아직 시야에 있고, 새 후보가 압도적으로 가깝지
+    /* 붙잡고 있던 것이 아직 화면 안에 있고, 새 후보가 압도적으로 가깝지
        않으면 그대로 둔다 */
-    if (held && held._sep <= HOLD_DEG &&
+    if (held && held._on &&
         (!best || best.id === held.id || held._sep <= best._sep * STICKY)) {
       return held.id;
     }
@@ -223,6 +234,7 @@ var App = (function () {
     tPrev = ts;
 
     Orient.step(dt);
+    syncLens();
     var list = Source.advance(Date.now(), dt);
     state.list = list;
     state.aimed = pickAim(list);
@@ -429,9 +441,9 @@ var App = (function () {
     /* 데스크톱: 휠로 화각 조절 */
     dom.hud.addEventListener('wheel', function (e) {
       e.preventDefault();
-      cfg.fov = Math.max(25, Math.min(120, cfg.fov + (e.deltaY > 0 ? 2 : -2)));
-      cfg.fovAuto = false;
-      View.setFov(cfg.fov); save();
+      /* 휠은 "지금 보이는 화각" 을 넓히고 좁힌다 — 눈에 보이는 대로 */
+      cfg.fovLong = View.setVisibleFov(View.hFov() + (e.deltaY > 0 ? 2 : -2));
+      save();
       if (UI.current() === 'settings') UI.paint(state, true);
     }, { passive: false });
 
@@ -485,7 +497,7 @@ var App = (function () {
     Camera.bind(document.getElementById('cam'));
     Render.init(document.getElementById('hud'), document.querySelector('#scope canvas'));
     Render.resize();
-    View.setFov(cfg.fov);
+    View.setFov(cfg.fovLong);
     Orient.setOffset(cfg.headingOffset);
     Orient.setTilt(cfg.tiltOffset);
     Orient.setManual(0, 12);             // 센서가 붙기 전까지의 기본 시선

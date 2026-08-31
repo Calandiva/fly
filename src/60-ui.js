@@ -435,8 +435,11 @@ var UI = (function () {
         slider('setAlertMin', 1, 20, 1, Math.round(c.alertMin), ' 분'), 'col') +
 
       '<div class="sechead">보정</div>' +
-      row('카메라 화각', '화면 속 항공기가 실제보다 안쪽/바깥쪽에 있으면 조절하세요',
-        slider('setFov', 25, 120, 1, Math.round(c.fov), '°'), 'col') +
+      '<div class="lens" id="lensNow">' + lensLine() + '</div>' +
+      row('보이는 화각', '화면 왼쪽 끝에서 오른쪽 끝까지가 몇 도인가입니다. ' +
+        '멀리 떨어진 두 지형지물을 화면 양끝에 걸쳐 놓고 맞추면 정확합니다. ' +
+        '이 값이 실제보다 좁으면 조금만 돌려도 비행기가 화면 밖으로 나갑니다',
+        slider('setFov', 15, 100, 1, Math.round(View.hFov()), '°'), 'col') +
       row('방위 보정', '나침반이 틀어져 있을 때 좌우로 밉니다',
         slider('setOff', -45, 45, 1, Math.round(c.headingOffset), '°'), 'col') +
       row('고각 보정', '지평선이 실제와 어긋날 때 위아래로 밉니다. ' +
@@ -521,7 +524,13 @@ var UI = (function () {
     rng('setAlertMin', ' 분', function (v) { c.alertMin = v; App.save(); });
     chk('setDemo', function (v) { c.demo = v; Source.setDemo(v); App.save(); toast(v ? '데모 항공기를 띄웁니다' : '실제 수신으로 돌아갑니다'); });
     /* 손으로 맞춘 값을 자동 추정이 덮어쓰면 보정한 보람이 없다 */
-    rng('setFov', '°', function (v) { c.fov = v; c.fovAuto = false; View.setFov(v); App.save(); });
+    rng('setFov', '°', function (v) {
+      /* 안쪽에는 렌즈의 긴 축 화각으로 담는다 — 화면을 돌려도 살아남는 값 */
+      c.fovLong = View.setVisibleFov(v);
+      App.save();
+      var l = document.getElementById('lensNow');
+      if (l) l.textContent = lensLine();
+    });
     rng('setOff', '°', function (v) { c.headingOffset = v; Orient.setOffset(v); App.save(); });
     rng('setTilt', '°', function (v) { c.tiltOffset = v; Orient.setTilt(v); App.save(); });
     rng('setMax', ' NM', function (v) { c.maxNm = v; App.save(); });
@@ -568,6 +577,17 @@ var UI = (function () {
       App.useUrl(v, /opensky/i.test(v) ? 'opensky' : 'readsb');
       toast('직접 지정 주소를 씁니다');
     };
+  }
+
+  /* 지금 렌즈를 어떻게 잡고 있는지 한 줄로. 화각이 실제와 어긋나면
+     비행기가 엉뚱한 곳에 서고 조금만 돌려도 화면 밖으로 나가는데,
+     그때 볼 수 있는 값이 없으면 무엇을 고쳐야 할지 알 수 없다. */
+  function lensLine() {
+    var v = View.state, o = Orient.state;
+    var src = (v.vw && v.vh) ? (v.vw + '×' + v.vh + ' 영상') : '카메라 없음';
+    return esc(src + ' → 화면 ' + Math.round(v.w) + '×' + Math.round(v.h) +
+      ' · 보이는 화각 가로 ' + View.hFov().toFixed(0) + '° 세로 ' + View.vFov().toFixed(0) + '°' +
+      ' · 지금 ' + Geo.fmtAz(o.heading) + ' 고각 ' + o.pitch.toFixed(0) + '°');
   }
 
   /* ── 연결 점검 ────────────────────────────────────────────── */

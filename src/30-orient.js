@@ -75,8 +75,8 @@ var Orient = (function () {
     mh: 0, mp: 12,          // 드래그 모드의 방위·고각
     tLast: 0,
     stamp: 0,               // 마지막 이벤트 시각
-    vH: 0, vP: 0,           // 추정한 회전 속도 (°/s)
-    pH: null, pP: null,     // 직전 원시 방위·고각
+    rate: 0,                // 추정한 회전 속도 (°/s) — 좌표계와 무관한 값
+    lq: null,               // 한 박자 늦게 따라오는 자세 (속도 추정용)
     gain: 1.6               // 지금 쓰고 있는 평활화 계수
   };
 
@@ -140,14 +140,6 @@ var Orient = (function () {
     st.ok = true;
   }
 
-  /* 쿼터니언에서 카메라 방위·고각만 뽑는다 (속도 추정용) */
-  function aim(q) {
-    var R = Quat.toMat(q);
-    var f = [-R[0][2], -R[1][2], -R[2][2]];
-    return { h: Geo.norm360(Geo.deg(Math.atan2(f[0], f[1]))),
-             p: Geo.deg(Math.asin(Math.max(-1, Math.min(1, f[2])))) };
-  }
-
   /* 매 프레임 호출 — dt(초) 만큼 평활화를 진행한다 */
   function step(dt) {
     /* 화면 회전 각이 바뀌는 순간, 캔버스 크기는 아직 옛것일 수 있다.
@@ -161,16 +153,23 @@ var Orient = (function () {
     if (!st.ok) return;
     dt = Math.max(0.001, Math.min(0.2, dt));
 
-    /* 지난 프레임의 출력이 얼마나 움직였는지로 실제 회전 속도를 추정한다 */
-    var cur = aim(st.q);
-    if (st.pH != null) {
-      var a = 1 - Math.exp(-dt / TAU);
-      st.vH += (Geo.norm180(cur.h - st.pH) / dt - st.vH) * a;
-      st.vP += ((cur.p - st.pP) / dt - st.vP) * a;
-    }
-    st.pH = cur.h; st.pP = cur.p;
+    /* 지난 프레임의 출력이 얼마나 움직였는지로 실제 회전 속도를 추정한다.
+       방위·고각(오일러)으로 재면 안 된다 — 하늘을 올려다보는 자세(고각 75~85°)
+       에서는 방위 변화율이 1/cos(고각) 배로 부풀어, 화면이 0.5°/s 밖에 안
+       움직이는데도 6°/s 로 읽힌다. 그러면 가만히 있는 동안에도 계수가 올라가
+       나침반 잡음이 그대로 새어 나온다. 쿼터니언 사이의 각은 좌표계와 무관해
+       "화면이 실제로 몇 도 돌았는가" 를 그대로 준다. */
+    /* 프레임 사이의 각을 그대로 쓰면 안 된다 — 각은 부호가 없어서 좌우로
+       떠는 잡음도 "돌고 있다" 로 읽힌다. 대신 한 박자 늦게 따라오는 자세를
+       하나 더 두고, 그 둘이 벌어진 각을 본다. 잡음은 평균이 0 이라 뒤따르는
+       쪽도 같은 자리에 머물러 각이 벌어지지 않고, 실제로 돌리면 앞선 쪽이
+       달아나 각이 rate·TAU 만큼 벌어진다. */
+    if (!st.lq) st.lq = st.q;
+    st.lq = Quat.slerp(st.lq, st.q, 1 - Math.exp(-dt / TAU));
+    var lag = Geo.deg(2 * Math.acos(Math.min(1, Math.abs(Quat.dot(st.lq, st.q)))));
+    st.rate = lag / TAU;
 
-    var speed = Math.sqrt(st.vH * st.vH + st.vP * st.vP);
+    var speed = st.rate;
     var mix = Math.min(1, speed / FAST_DPS);
     var want = K_SLOW + (K_FAST - K_SLOW) * mix;
     /* 계수를 목표로 서서히 옮긴다. 곧바로 바꾸면 그 순간이 곧 스냅이다. */
@@ -257,7 +256,7 @@ var Orient = (function () {
      (R 의 3열이 기기 +z 이고 카메라는 -z 를 보므로 그렇게 떨어진다.) */
   function setManual(h, p) {
     st.manual = true; st.absolute = true; st.source = 'manual'; st.ok = true;
-    st.vH = st.vP = 0; st.pH = null; st.pP = null;   // 드래그는 잡음이 없다
+    st.rate = 0; st.lq = null;                      // 드래그는 잡음이 없다
     st.mh = Geo.norm360(h);
     st.mp = Math.max(-88, Math.min(88, p));
     st.raw = Quat.fromZXY(Geo.rad(-st.mh), Geo.rad(90 + st.mp), 0);
@@ -278,15 +277,30 @@ var Orient = (function () {
    한가운데에 오고, 수평 화각은 "잘리기 전 영상 전체 폭"에 대응하므로
    초점거리는 그 폭을 기준으로 잡아야 실제 하늘과 맞는다. */
 var View = (function () {
-  var st = { w: 0, h: 0, dpr: 1, fov: 67, f: 600, cx: 0, cy: 0, vw: 0, vh: 0 };
+  /* fovLong 이 기준값이다 — 렌즈의 긴 축 화각. 화면을 돌리면 영상의 가로·
+     세로가 뒤바뀌지만 렌즈는 그대로이므로, 이 값만 붙들고 있으면 한 번
+     맞춰 둔 보정이 세로에서도 가로에서도 그대로 산다.
+     fov 는 그때그때 "영상 가로 기준" 으로 옮긴 값이고 투영에만 쓴다. */
+  var st = { w: 0, h: 0, dpr: 1, fovLong: 67, fov: 67, f: 600,
+             cx: 0, cy: 0, vw: 0, vh: 0 };
 
   function resize(w, h, dpr) { st.w = w; st.h = h; st.dpr = dpr || 1; recalc(); }
-  function video(vw, vh) { st.vw = vw || 0; st.vh = vh || 0; recalc(); }
-  function setFov(d) { st.fov = Math.max(25, Math.min(120, d)); recalc(); }
+  function video(vw, vh) {
+    vw = vw || 0; vh = vh || 0;
+    if (vw === st.vw && vh === st.vh) return false;
+    st.vw = vw; st.vh = vh; recalc();
+    return true;
+  }
+  function setFov(d) { st.fovLong = Math.max(20, Math.min(140, d)); recalc(); }
 
   function recalc() {
     st.cx = st.w / 2; st.cy = st.h / 2;
-    if (st.vw > 0 && st.vh > 0 && st.w > 0 && st.h > 0) {
+    var hasVid = st.vw > 0 && st.vh > 0 && st.w > 0 && st.h > 0;
+    /* 긴 축 화각을 지금 영상의 가로 기준으로 옮긴다 */
+    st.fov = (!hasVid || st.vw >= st.vh)
+      ? st.fovLong
+      : Geo.deg(2 * Math.atan(Math.tan(Geo.rad(st.fovLong) / 2) * st.vw / st.vh));
+    if (hasVid) {
       /* 카메라 영상이 있을 때: 화각은 잘리기 전 영상 전체 폭에 대응한다 */
       var scale = Math.max(st.w / st.vw, st.h / st.vh);   // object-fit: cover
       st.f = (st.vw * scale / 2) / Math.tan(Geo.rad(st.fov) / 2);
@@ -324,9 +338,31 @@ var View = (function () {
     return p.front && p.x > -pad && p.x < st.w + pad && p.y > -pad && p.y < st.h + pad;
   }
 
-  /* 현재 초점거리에서의 실제 수직 화각 — 눈금자 그릴 때 쓴다 */
+  /* 지금 화면에 실제로 담기는 화각. st.fov 는 "잘리기 전 영상 전체 폭" 에
+     대한 값이라 사람이 눈으로 확인할 수 없다. 눈으로 맞출 수 있는 값은
+     이쪽 — 화면 좌우 끝, 위아래 끝이 몇 도인가 이다. */
+  function hFov() { return Geo.deg(2 * Math.atan((st.w / 2) / st.f)); }
   function vFov() { return Geo.deg(2 * Math.atan((st.h / 2) / st.f)); }
 
+  /* 눈에 보이는 가로 화각을 직접 지정한다. 안쪽에서는 잘리기 전 폭 기준으로
+     되돌려 두어야 화면을 돌리거나 영상 크기가 바뀌어도 값이 유지된다. */
+  function setVisibleFov(hdeg) {
+    hdeg = Math.max(8, Math.min(160, hdeg));
+    var f = (st.w / 2) / Math.tan(Geo.rad(hdeg) / 2);
+    st.fovLong = Math.max(20, Math.min(140, Geo.deg(2 * Math.atan((fullLong() / 2) / f))));
+    recalc();
+    return st.fovLong;
+  }
+
+  /* 잘리기 전 영상의 긴 축이 화면에서 차지하는 길이(CSS px) */
+  function fullLong() {
+    if (st.vw > 0 && st.vh > 0 && st.w > 0 && st.h > 0) {
+      return Math.max(st.vw, st.vh) * Math.max(st.w / st.vw, st.h / st.vh);
+    }
+    return Math.max(st.w, st.h) || 1;
+  }
+
   return { state: st, resize: resize, video: video, setFov: setFov,
-           project: project, onScreen: onScreen, vFov: vFov };
+           project: project, onScreen: onScreen,
+           hFov: hFov, vFov: vFov, setVisibleFov: setVisibleFov };
 })();
