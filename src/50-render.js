@@ -273,11 +273,40 @@ var Render = (function () {
      후보가 화면 밖으로 조금 삐져나오면 잘라 버리지 말고 안쪽으로 밀어
      넣는다 — 몇 픽셀 차이로 라벨을 통째로 잃는 게 훨씬 나쁘다. */
   var EDGE = 3;
-  function place(boxes, mx, my, w, h, gap, preferLeft) {
+
+  /* 지난 프레임에 어느 자리를 골랐는지 기억해 둔다. 매 프레임 처음부터
+     고르면 마커가 조금만 움직여도 라벨이 좌우로 튀는데, 돌리는 중에는
+     그게 화면 전체가 들썩이는 것처럼 보인다. */
+  var lastSlot = Object.create(null);
+  var slotSeen = Object.create(null);
+
+  function fits(boxes, bx, by, w, h) {
+    if (bx < EDGE || bx + w > W - EDGE || by < EDGE || by + h > H - EDGE) return false;
+    for (var i = 0; i < boxes.length; i++) {
+      var b = boxes[i];
+      if (bx < b[0] + b[2] + 4 && bx + w + 4 > b[0] &&
+          by < b[1] + b[3] + 3 && by + h + 3 > b[1]) return false;
+    }
+    return true;
+  }
+
+  function place(boxes, mx, my, w, h, gap, preferLeft, id) {
     if (w > W - EDGE * 2 || h > H - EDGE * 2) return null;
     var xs = preferLeft ? [mx - gap - w, mx + gap] : [mx + gap, mx - gap - w];
     var y0 = my - h / 2;
     var ys = [y0, y0 - h - 10, y0 + h + 10];
+
+    /* 지난번 자리가 아직 쓸 만하면 그대로 쓴다 */
+    var prev = id ? lastSlot[id] : null;
+    if (prev) {
+      var px = Math.max(EDGE, Math.min(W - w - EDGE,
+                        prev.left ? mx - gap - w : mx + gap));
+      var py = ys[prev.yi] + prev.push * (h + 5);
+      if (fits(boxes, px, py, w, h)) {
+        if (id) slotSeen[id] = 1;
+        return [px, py];
+      }
+    }
 
     /* 가까운 자리를 먼저 다 훑고 나서 아래로 민다.
        후보별로 끝까지 밀어 보면 지시선이 화면을 가로지를 만큼 길어진다. */
@@ -286,18 +315,23 @@ var Render = (function () {
         for (var xi = 0; xi < xs.length; xi++) {
           var bx = Math.max(EDGE, Math.min(W - w - EDGE, xs[xi]));
           var by = ys[yi] + push * (h + 5);
-          if (by < EDGE || by + h > H - EDGE) continue;
-          var clash = false;
-          for (var i = 0; i < boxes.length; i++) {
-            var b = boxes[i];
-            if (bx < b[0] + b[2] + 4 && bx + w + 4 > b[0] &&
-                by < b[1] + b[3] + 3 && by + h + 3 > b[1]) { clash = true; break; }
+          if (fits(boxes, bx, by, w, h)) {
+            if (id) {
+              lastSlot[id] = { left: xs[xi] < mx, yi: yi, push: push };
+              slotSeen[id] = 1;
+            }
+            return [bx, by];
           }
-          if (!clash) return [bx, by];
         }
       }
     }
     return null;
+  }
+
+  /* 사라진 항공기의 기억은 버린다 */
+  function sweepSlots() {
+    for (var k in lastSlot) if (!slotSeen[k]) delete lastSlot[k];
+    slotSeen = Object.create(null);
   }
 
   function label(a, metric, extra) {
@@ -538,7 +572,7 @@ var Render = (function () {
       var h = 10 + L.length * 12;
       /* 강조 고리가 가장 크게 부푼 상태를 기준으로 여백을 잡는다 */
       var gap = s * 1.15 + (focus ? 21 : near ? 21 : 10) + 6;
-      var pos = place(boxes, p.x, p.y, w, h, gap, focus && pathDx > 0);
+      var pos = place(boxes, p.x, p.y, w, h, gap, focus && pathDx > 0, a.id);
       if (!pos) continue;
       boxes.push([pos[0], pos[1], w, h]);
       labeled++;
@@ -573,6 +607,7 @@ var Render = (function () {
     }
 
     offscreen(cx, offs, sel, metric, boxes);
+    sweepSlots();
     scope(list, opt);
   }
 

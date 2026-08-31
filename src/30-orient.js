@@ -77,7 +77,7 @@ var Orient = (function () {
     stamp: 0,               // 마지막 이벤트 시각
     vH: 0, vP: 0,           // 추정한 회전 속도 (°/s)
     pH: null, pP: null,     // 직전 원시 방위·고각
-    gain: 0                 // 지금 쓰고 있는 평활화 계수 (진단용)
+    gain: 1.6               // 지금 쓰고 있는 평활화 계수
   };
 
   /* 나침반은 실내에서 쉽게 ±10° 넘게 떤다. 한 가지 세기로 평활화하면
@@ -88,11 +88,16 @@ var Orient = (function () {
      해당해서 실제 회전(25~100°/s)을 완전히 덮는다. 이미 평활화된 출력에서
      재면 잡음이 대부분 걷힌 뒤라 실제 움직임만 남는다. 돌리기 시작하면
      출력이 움직이고 → 속도가 오르고 → 계수가 커져 곧 따라잡는다. */
-  var K_SLOW = 0.8;         // 가만히 있을 때: 아주 느리게 (떨림을 걷어낸다)
-  var K_FAST = 22;          // 실제로 돌릴 때: 즉각 따라간다
-  var FAST_DPS = 24;        // 이 속도(°/s) 이상이면 완전히 빠르게
-  var TAU = 0.30;           // 속도 추정의 시정수 (초)
-  var DEAD_DEG = 0.12;      // 이보다 작은 변화는 아예 무시한다
+  /* 계수가 갑자기 뛰면 그것대로 문제다. 무겁게 붙들고 있다가 문턱을 넘는
+     순간 밀린 만큼 한꺼번에 따라잡으면 "휙" 하고 튄다. 그래서 계수 자체도
+     서서히만 변하게 묶는다. 최대치도 낮게 둔다 — 높이면 결국 잡음을 그대로
+     통과시켜 돌리는 내내 화면이 들썩인다. */
+  var K_SLOW = 1.6;         // 가만히 있을 때: 느리게 (떨림을 걷어낸다)
+  var K_FAST = 5.5;           // 돌릴 때도 이 이상은 올리지 않는다
+  var FAST_DPS = 30;        // 이 속도(°/s) 이상이면 최대 계수
+  var TAU = 0.22;           // 속도 추정의 시정수 (초)
+  var K_TAU = 0.45;         // 계수 자체가 변하는 데 걸리는 시간
+  var DEAD_DEG = 0.10;      // 이보다 작은 변화는 아예 무시한다
 
   function screenAngle() {
     if (window.screen && window.screen.orientation && typeof window.screen.orientation.angle === 'number') {
@@ -145,7 +150,14 @@ var Orient = (function () {
 
   /* 매 프레임 호출 — dt(초) 만큼 평활화를 진행한다 */
   function step(dt) {
-    st.screen = screenAngle();
+    /* 화면 회전 각이 바뀌는 순간, 캔버스 크기는 아직 옛것일 수 있다.
+       그 몇 프레임 동안 세상이 통째로 90° 돌아간 채 그려진다 — 폰을 돌릴 때
+       화면이 휙 뒤집히는 것이 이것이다. 각이 바뀌면 즉시 알린다. */
+    var sa = screenAngle();
+    if (sa !== st.screen) {
+      st.screen = sa;
+      for (var i = 0; i < rotSubs.length; i++) rotSubs[i](sa);
+    }
     if (!st.ok) return;
     dt = Math.max(0.001, Math.min(0.2, dt));
 
@@ -160,7 +172,10 @@ var Orient = (function () {
 
     var speed = Math.sqrt(st.vH * st.vH + st.vP * st.vP);
     var mix = Math.min(1, speed / FAST_DPS);
-    var k = st.gain = K_SLOW + (K_FAST - K_SLOW) * mix;
+    var want = K_SLOW + (K_FAST - K_SLOW) * mix;
+    /* 계수를 목표로 서서히 옮긴다. 곧바로 바꾸면 그 순간이 곧 스냅이다. */
+    st.gain += (want - st.gain) * (1 - Math.exp(-dt / K_TAU));
+    var k = st.gain;
 
     /* 아주 작은 변화는 아예 옮기지 않는다 — 미세 떨림의 마지막 한 겹 */
     var dot = Math.abs(Quat.dot(st.q, st.raw));
@@ -204,6 +219,9 @@ var Orient = (function () {
     }
     return [sx, sy, sz];
   }
+
+  var rotSubs = [];
+  function onRotate(f) { rotSubs.push(f); }
 
   function attach() {
     var abs = 'ondeviceorientationabsolute' in window;
@@ -249,6 +267,7 @@ var Orient = (function () {
   return {
     state: st, step: step, request: request, attach: attach,
     toScreenSpace: toScreenSpace, stale: stale, usable: usable, setManual: setManual,
+    onRotate: onRotate,
     setOffset: function (d) { st.offset = d; },
     setTilt: function (d) { st.tilt = d; }
   };

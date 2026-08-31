@@ -448,6 +448,9 @@ var App = (function () {
       Source.noteCsp(e.blockedURI || e.violatedDirective || '');
     });
 
+    /* 화면 회전 각이 바뀌면 캔버스도 그 자리에서 다시 잡는다.
+       resize 이벤트를 기다리면 그 사이 몇 프레임이 어긋난 채 그려진다. */
+    Orient.onRotate(function () { Render.resize(); });
     window.addEventListener('resize', function () { Render.resize(); });
     if (window.visualViewport) window.visualViewport.addEventListener('resize', function () { Render.resize(); });
     document.addEventListener('visibilitychange', function () {

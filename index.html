@@ -986,7 +986,7 @@ var Orient = (function () {
     stamp: 0,               // 마지막 이벤트 시각
     vH: 0, vP: 0,           // 추정한 회전 속도 (°/s)
     pH: null, pP: null,     // 직전 원시 방위·고각
-    gain: 0                 // 지금 쓰고 있는 평활화 계수 (진단용)
+    gain: 1.6               // 지금 쓰고 있는 평활화 계수
   };
 
   /* 나침반은 실내에서 쉽게 ±10° 넘게 떤다. 한 가지 세기로 평활화하면
@@ -997,11 +997,16 @@ var Orient = (function () {
      해당해서 실제 회전(25~100°/s)을 완전히 덮는다. 이미 평활화된 출력에서
      재면 잡음이 대부분 걷힌 뒤라 실제 움직임만 남는다. 돌리기 시작하면
      출력이 움직이고 → 속도가 오르고 → 계수가 커져 곧 따라잡는다. */
-  var K_SLOW = 0.8;         // 가만히 있을 때: 아주 느리게 (떨림을 걷어낸다)
-  var K_FAST = 22;          // 실제로 돌릴 때: 즉각 따라간다
-  var FAST_DPS = 24;        // 이 속도(°/s) 이상이면 완전히 빠르게
-  var TAU = 0.30;           // 속도 추정의 시정수 (초)
-  var DEAD_DEG = 0.12;      // 이보다 작은 변화는 아예 무시한다
+  /* 계수가 갑자기 뛰면 그것대로 문제다. 무겁게 붙들고 있다가 문턱을 넘는
+     순간 밀린 만큼 한꺼번에 따라잡으면 "휙" 하고 튄다. 그래서 계수 자체도
+     서서히만 변하게 묶는다. 최대치도 낮게 둔다 — 높이면 결국 잡음을 그대로
+     통과시켜 돌리는 내내 화면이 들썩인다. */
+  var K_SLOW = 1.6;         // 가만히 있을 때: 느리게 (떨림을 걷어낸다)
+  var K_FAST = 5.5;           // 돌릴 때도 이 이상은 올리지 않는다
+  var FAST_DPS = 30;        // 이 속도(°/s) 이상이면 최대 계수
+  var TAU = 0.22;           // 속도 추정의 시정수 (초)
+  var K_TAU = 0.45;         // 계수 자체가 변하는 데 걸리는 시간
+  var DEAD_DEG = 0.10;      // 이보다 작은 변화는 아예 무시한다
 
   function screenAngle() {
     if (window.screen && window.screen.orientation && typeof window.screen.orientation.angle === 'number') {
@@ -1054,7 +1059,14 @@ var Orient = (function () {
 
   /* 매 프레임 호출 — dt(초) 만큼 평활화를 진행한다 */
   function step(dt) {
-    st.screen = screenAngle();
+    /* 화면 회전 각이 바뀌는 순간, 캔버스 크기는 아직 옛것일 수 있다.
+       그 몇 프레임 동안 세상이 통째로 90° 돌아간 채 그려진다 — 폰을 돌릴 때
+       화면이 휙 뒤집히는 것이 이것이다. 각이 바뀌면 즉시 알린다. */
+    var sa = screenAngle();
+    if (sa !== st.screen) {
+      st.screen = sa;
+      for (var i = 0; i < rotSubs.length; i++) rotSubs[i](sa);
+    }
     if (!st.ok) return;
     dt = Math.max(0.001, Math.min(0.2, dt));
 
@@ -1069,7 +1081,10 @@ var Orient = (function () {
 
     var speed = Math.sqrt(st.vH * st.vH + st.vP * st.vP);
     var mix = Math.min(1, speed / FAST_DPS);
-    var k = st.gain = K_SLOW + (K_FAST - K_SLOW) * mix;
+    var want = K_SLOW + (K_FAST - K_SLOW) * mix;
+    /* 계수를 목표로 서서히 옮긴다. 곧바로 바꾸면 그 순간이 곧 스냅이다. */
+    st.gain += (want - st.gain) * (1 - Math.exp(-dt / K_TAU));
+    var k = st.gain;
 
     /* 아주 작은 변화는 아예 옮기지 않는다 — 미세 떨림의 마지막 한 겹 */
     var dot = Math.abs(Quat.dot(st.q, st.raw));
@@ -1113,6 +1128,9 @@ var Orient = (function () {
     }
     return [sx, sy, sz];
   }
+
+  var rotSubs = [];
+  function onRotate(f) { rotSubs.push(f); }
 
   function attach() {
     var abs = 'ondeviceorientationabsolute' in window;
@@ -1158,6 +1176,7 @@ var Orient = (function () {
   return {
     state: st, step: step, request: request, attach: attach,
     toScreenSpace: toScreenSpace, stale: stale, usable: usable, setManual: setManual,
+    onRotate: onRotate,
     setOffset: function (d) { st.offset = d; },
     setTilt: function (d) { st.tilt = d; }
   };
@@ -2751,11 +2770,40 @@ var Render = (function () {
      후보가 화면 밖으로 조금 삐져나오면 잘라 버리지 말고 안쪽으로 밀어
      넣는다 — 몇 픽셀 차이로 라벨을 통째로 잃는 게 훨씬 나쁘다. */
   var EDGE = 3;
-  function place(boxes, mx, my, w, h, gap, preferLeft) {
+
+  /* 지난 프레임에 어느 자리를 골랐는지 기억해 둔다. 매 프레임 처음부터
+     고르면 마커가 조금만 움직여도 라벨이 좌우로 튀는데, 돌리는 중에는
+     그게 화면 전체가 들썩이는 것처럼 보인다. */
+  var lastSlot = Object.create(null);
+  var slotSeen = Object.create(null);
+
+  function fits(boxes, bx, by, w, h) {
+    if (bx < EDGE || bx + w > W - EDGE || by < EDGE || by + h > H - EDGE) return false;
+    for (var i = 0; i < boxes.length; i++) {
+      var b = boxes[i];
+      if (bx < b[0] + b[2] + 4 && bx + w + 4 > b[0] &&
+          by < b[1] + b[3] + 3 && by + h + 3 > b[1]) return false;
+    }
+    return true;
+  }
+
+  function place(boxes, mx, my, w, h, gap, preferLeft, id) {
     if (w > W - EDGE * 2 || h > H - EDGE * 2) return null;
     var xs = preferLeft ? [mx - gap - w, mx + gap] : [mx + gap, mx - gap - w];
     var y0 = my - h / 2;
     var ys = [y0, y0 - h - 10, y0 + h + 10];
+
+    /* 지난번 자리가 아직 쓸 만하면 그대로 쓴다 */
+    var prev = id ? lastSlot[id] : null;
+    if (prev) {
+      var px = Math.max(EDGE, Math.min(W - w - EDGE,
+                        prev.left ? mx - gap - w : mx + gap));
+      var py = ys[prev.yi] + prev.push * (h + 5);
+      if (fits(boxes, px, py, w, h)) {
+        if (id) slotSeen[id] = 1;
+        return [px, py];
+      }
+    }
 
     /* 가까운 자리를 먼저 다 훑고 나서 아래로 민다.
        후보별로 끝까지 밀어 보면 지시선이 화면을 가로지를 만큼 길어진다. */
@@ -2764,18 +2812,23 @@ var Render = (function () {
         for (var xi = 0; xi < xs.length; xi++) {
           var bx = Math.max(EDGE, Math.min(W - w - EDGE, xs[xi]));
           var by = ys[yi] + push * (h + 5);
-          if (by < EDGE || by + h > H - EDGE) continue;
-          var clash = false;
-          for (var i = 0; i < boxes.length; i++) {
-            var b = boxes[i];
-            if (bx < b[0] + b[2] + 4 && bx + w + 4 > b[0] &&
-                by < b[1] + b[3] + 3 && by + h + 3 > b[1]) { clash = true; break; }
+          if (fits(boxes, bx, by, w, h)) {
+            if (id) {
+              lastSlot[id] = { left: xs[xi] < mx, yi: yi, push: push };
+              slotSeen[id] = 1;
+            }
+            return [bx, by];
           }
-          if (!clash) return [bx, by];
         }
       }
     }
     return null;
+  }
+
+  /* 사라진 항공기의 기억은 버린다 */
+  function sweepSlots() {
+    for (var k in lastSlot) if (!slotSeen[k]) delete lastSlot[k];
+    slotSeen = Object.create(null);
   }
 
   function label(a, metric, extra) {
@@ -3016,7 +3069,7 @@ var Render = (function () {
       var h = 10 + L.length * 12;
       /* 강조 고리가 가장 크게 부푼 상태를 기준으로 여백을 잡는다 */
       var gap = s * 1.15 + (focus ? 21 : near ? 21 : 10) + 6;
-      var pos = place(boxes, p.x, p.y, w, h, gap, focus && pathDx > 0);
+      var pos = place(boxes, p.x, p.y, w, h, gap, focus && pathDx > 0, a.id);
       if (!pos) continue;
       boxes.push([pos[0], pos[1], w, h]);
       labeled++;
@@ -3051,6 +3104,7 @@ var Render = (function () {
     }
 
     offscreen(cx, offs, sel, metric, boxes);
+    sweepSlots();
     scope(list, opt);
   }
 
@@ -3959,7 +4013,7 @@ var App = (function () {
 
   /* 빌드 표시 — build.py 가 채워 넣는다. 배포된 것이 어느 빌드인지
      화면에서 바로 확인할 수 있어야 "올리긴 했나" 를 두고 헤매지 않는다. */
-  var BUILD = '2026-08-31 00:15 b832c7fd';
+  var BUILD = '2026-08-31 01:06 d4deaf2b';
 
   var cfg = {
     metric: true,
@@ -4401,6 +4455,9 @@ var App = (function () {
       Source.noteCsp(e.blockedURI || e.violatedDirective || '');
     });
 
+    /* 화면 회전 각이 바뀌면 캔버스도 그 자리에서 다시 잡는다.
+       resize 이벤트를 기다리면 그 사이 몇 프레임이 어긋난 채 그려진다. */
+    Orient.onRotate(function () { Render.resize(); });
     window.addEventListener('resize', function () { Render.resize(); });
     if (window.visualViewport) window.visualViewport.addEventListener('resize', function () { Render.resize(); });
     document.addEventListener('visibilitychange', function () {
