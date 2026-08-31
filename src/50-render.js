@@ -435,6 +435,7 @@ var Render = (function () {
     for (var i = 0; i < list.length; i++) {
       var a = list[i];
       if (a.slantM > Geo.nmToM(opt.maxNm)) continue;
+      if (!opt.showGround && !a.airborne) continue;   // 고도 미상·지상 항공기
       if (a.altFt != null && a.altFt < opt.minAltFt) continue;
       var p = View.project(a.az, a.el);
       a._sx = p.x; a._sy = p.y; a._front = p.front;
@@ -682,6 +683,7 @@ var Render = (function () {
       if (a.distM > rangeM) continue;
       if (a.altFt != null && a.altFt < opt.minAltFt) continue;
       var isSel = opt.selected === a.id;
+      if (!opt.showGround && !a.airborne) continue;
       var tr = a.trail;
       if (!tr || tr.length < 2) continue;
       sx.strokeStyle = isSel ? 'rgba(111,216,255,.75)' : 'rgba(95,227,161,.30)';
@@ -700,6 +702,7 @@ var Render = (function () {
       var a2 = list[i];
       if (a2.distM > rangeM) continue;
       if (a2.altFt != null && a2.altFt < opt.minAltFt) continue;
+      if (!opt.showGround && !a2.airborne) continue;
       var sel2 = opt.selected === a2.id;
       var near2 = Track.imminent(a2, opt.alertM, opt.alertS);
       var xy = pol(a2.az, a2.distM), x = xy[0], y = xy[1];

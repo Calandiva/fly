@@ -73,10 +73,25 @@ var Orient = (function () {
     manual: false,          // 센서가 없어 드래그로 둘러보는 중인가
     mh: 0, mp: 12,          // 드래그 모드의 방위·고각
     tLast: 0,
-    stamp: 0                // 마지막 이벤트 시각
+    stamp: 0,               // 마지막 이벤트 시각
+    vH: 0, vP: 0,           // 추정한 회전 속도 (°/s)
+    pH: null, pP: null,     // 직전 원시 방위·고각
+    gain: 0                 // 지금 쓰고 있는 평활화 계수 (진단용)
   };
 
-  var SMOOTH = 14;          // 클수록 반응이 빠르고 대신 떨린다
+  /* 나침반은 실내에서 쉽게 ±10° 넘게 떤다. 한 가지 세기로 평활화하면
+     떨림을 잡으면 굼뜨고, 반응을 살리면 화면이 흔들린다.
+
+     그래서 "지금 실제로 돌리고 있는가" 를 따로 추정해 세기를 바꾼다.
+     속도를 원시 신호에서 재면 안 된다 — 프레임 사이 잡음 10° 는 600°/s 에
+     해당해서 실제 회전(25~100°/s)을 완전히 덮는다. 이미 평활화된 출력에서
+     재면 잡음이 대부분 걷힌 뒤라 실제 움직임만 남는다. 돌리기 시작하면
+     출력이 움직이고 → 속도가 오르고 → 계수가 커져 곧 따라잡는다. */
+  var K_SLOW = 0.8;         // 가만히 있을 때: 아주 느리게 (떨림을 걷어낸다)
+  var K_FAST = 22;          // 실제로 돌릴 때: 즉각 따라간다
+  var FAST_DPS = 24;        // 이 속도(°/s) 이상이면 완전히 빠르게
+  var TAU = 0.30;           // 속도 추정의 시정수 (초)
+  var DEAD_DEG = 0.12;      // 이보다 작은 변화는 아예 무시한다
 
   function screenAngle() {
     if (window.screen && window.screen.orientation && typeof window.screen.orientation.angle === 'number') {
@@ -119,12 +134,38 @@ var Orient = (function () {
     st.ok = true;
   }
 
+  /* 쿼터니언에서 카메라 방위·고각만 뽑는다 (속도 추정용) */
+  function aim(q) {
+    var R = Quat.toMat(q);
+    var f = [-R[0][2], -R[1][2], -R[2][2]];
+    return { h: Geo.norm360(Geo.deg(Math.atan2(f[0], f[1]))),
+             p: Geo.deg(Math.asin(Math.max(-1, Math.min(1, f[2])))) };
+  }
+
   /* 매 프레임 호출 — dt(초) 만큼 평활화를 진행한다 */
   function step(dt) {
     st.screen = screenAngle();
     if (!st.ok) return;
-    var t = 1 - Math.exp(-SMOOTH * Math.max(0.001, Math.min(0.2, dt)));
-    st.q = Quat.slerp(st.q, st.raw, t);
+    dt = Math.max(0.001, Math.min(0.2, dt));
+
+    /* 지난 프레임의 출력이 얼마나 움직였는지로 실제 회전 속도를 추정한다 */
+    var cur = aim(st.q);
+    if (st.pH != null) {
+      var a = 1 - Math.exp(-dt / TAU);
+      st.vH += (Geo.norm180(cur.h - st.pH) / dt - st.vH) * a;
+      st.vP += ((cur.p - st.pP) / dt - st.vP) * a;
+    }
+    st.pH = cur.h; st.pP = cur.p;
+
+    var speed = Math.sqrt(st.vH * st.vH + st.vP * st.vP);
+    var mix = Math.min(1, speed / FAST_DPS);
+    var k = st.gain = K_SLOW + (K_FAST - K_SLOW) * mix;
+
+    /* 아주 작은 변화는 아예 옮기지 않는다 — 미세 떨림의 마지막 한 겹 */
+    var dot = Math.abs(Quat.dot(st.q, st.raw));
+    if (Geo.deg(2 * Math.acos(Math.min(1, dot))) > DEAD_DEG) {
+      st.q = Quat.slerp(st.q, st.raw, 1 - Math.exp(-k * dt));
+    }
     st.R = Quat.toMat(st.q);
 
     /* 카메라(기기 뒷면)는 기기 -z 를 본다. 월드로 옮기면 R·(0,0,-1) = -R[..][2] */
@@ -188,6 +229,7 @@ var Orient = (function () {
      (R 의 3열이 기기 +z 이고 카메라는 -z 를 보므로 그렇게 떨어진다.) */
   function setManual(h, p) {
     st.manual = true; st.absolute = true; st.source = 'manual'; st.ok = true;
+    st.vH = st.vP = 0; st.pH = null; st.pP = null;   // 드래그는 잡음이 없다
     st.mh = Geo.norm360(h);
     st.mp = Math.max(-88, Math.min(88, p));
     st.raw = Quat.fromZXY(Geo.rad(-st.mh), Geo.rad(90 + st.mp), 0);

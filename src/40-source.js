@@ -416,6 +416,11 @@ var Source = (function () {
 
       if (!p.ok) continue;
 
+      /* 하늘에 그릴 수 있는가. 고도를 모르면 세로로 어디에 둘지 알 수 없고,
+         지상에 있으면 애초에 하늘이 아니다. 0 ft 로 뭉개면 둘 다 해수면에
+         놓여 "땅에 있는 비행기" 로 보인다. */
+      a.airborne = !a.ground && a.altFt != null;
+
       /* 관측자 기준 방위·고각·거리 */
       var ground = Geo.haversine(p.lat, p.lon, a.dlat, a.dlon);
       var dh = Geo.ftToM(a.daltFt || 0) - (p.alt || 0);

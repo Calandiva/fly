@@ -11,6 +11,7 @@ var App = (function () {
   var cfg = {
     metric: true,
     camera: true,
+    showGround: false,      // 지상·고도 미상 항공기를 하늘에 그릴 것인가
     headingUp: false,
     trail: true,
     route: true,
@@ -22,7 +23,7 @@ var App = (function () {
     demo: false,
     fov: 67, fovAuto: true,
     headingOffset: 0,
-    maxNm: 120,
+    maxNm: 60,              // AR 은 이보다 멀면 전부 지평선에 붙는다
     minAltFt: 0,
     scopeNm: 40,
     radiusNm: 120,
@@ -194,6 +195,7 @@ var App = (function () {
     var maxM = Geo.nmToM(cfg.maxNm), n = 0;
     for (var i = 0; i < list.length; i++) {
       if (list[i].slantM > maxM) break;
+      if (!cfg.showGround && !list[i].airborne) continue;
       if (list[i].altFt != null && list[i].altFt < cfg.minAltFt) continue;
       n++;
     }
@@ -204,7 +206,7 @@ var App = (function () {
       metric: cfg.metric, selected: state.selected, now: now,
       maxNm: cfg.maxNm, minAltFt: cfg.minAltFt,
       scopeNm: cfg.scopeNm, headingUp: cfg.headingUp,
-      trail: cfg.trail, synth: !Camera.state.on,
+      trail: cfg.trail, synth: !Camera.state.on, showGround: cfg.showGround,
       alertM: cfg.alertKm * 1000, alertS: cfg.alertMin * 60
     });
 

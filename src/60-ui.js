@@ -132,7 +132,9 @@ var UI = (function () {
        목록에는 250 NM 짜리가 그대로 남아 상단의 대수와도 어긋난다. */
     var maxM = Geo.nmToM(app.cfg.maxNm);
     var list = app.list.filter(function (a) {
-      return a.slantM <= maxM && !(a.altFt != null && a.altFt < app.cfg.minAltFt);
+      if (a.slantM > maxM) return false;
+      if (!app.cfg.showGround && !a.airborne) return false;
+      return !(a.altFt != null && a.altFt < app.cfg.minAltFt);
     });
     if (sortBy === 'alt') list.sort(function (a, b) { return (a.altFt || 0) - (b.altFt || 0); });
     else if (sortBy === 'tca') {
@@ -358,6 +360,9 @@ var UI = (function () {
       row('레이더 기준', '스코프 위쪽을 무엇에 맞출지', '<div class="seg" id="upSeg">' +
         '<button data-v="0"' + (!c.headingUp ? ' class="on"' : '') + '>노스업</button>' +
         '<button data-v="1"' + (c.headingUp ? ' class="on"' : '') + '>헤딩업</button></div>') +
+      row('지상·고도 미상 표시', '활주로에 서 있거나 고도를 알 수 없는 항공기까지 ' +
+        '하늘에 그립니다. 고도를 모르면 해수면에 놓이므로 대개 지평선에 붙습니다',
+        sw('setGround', c.showGround)) +
       row('궤적과 진행 방향', '마커마다 60초 뒤까지의 벡터를 긋고, 스코프에는 ' +
         '지나온 자취를 남깁니다. 순항기는 이게 없으면 멈춰 보입니다',
         sw('setTrail', c.trail)) +
@@ -443,6 +448,7 @@ var UI = (function () {
     seg('upSeg', function (v) { c.headingUp = v; App.save(); });
     chk('setCam', function (v) { App.setCamera(v); });
     chk('setTrail', function (v) { c.trail = v; App.save(); });
+    chk('setGround', function (v) { c.showGround = v; App.save(); });
     chk('setWake', function (v) { App.setWake(v); });
     chk('setAlert', function (v) { c.alertOn = v; App.save(); });
     chk('setChime', function (v) { c.chime = v; App.primeAudio(); App.save(); });
