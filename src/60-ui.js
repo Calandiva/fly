@@ -11,7 +11,7 @@ var UI = (function () {
   function init() {
     el.stage = $('#stage'); el.sheet = $('#sheet'); el.body = $('#sheetBody');
     el.title = $('#sheetTitle'); el.tools = $('#sheetTools'); el.stat = $('#stat');
-    el.toast = $('#toast');
+    el.toast = $('#toast'); el.aim = $('#aim');
   }
 
   /* ── 토스트 ───────────────────────────────────────────────── */
@@ -77,6 +77,63 @@ var UI = (function () {
     }).join('');
   }
 
+  /* ── 겨냥 바 ──────────────────────────────────────────────
+     이 앱을 쓰는 순간은 "저 비행기 뭐지" 다. 화면 한가운데에 둔 한 대의
+     출발·도착을 가장 크게, 나머지 수치는 그 아래 한 줄로. */
+  var aimKey = '';
+  function aimBar(app) {
+    if (!el.aim) return;
+    var a = app.byId(app.aimed);
+    var m = app.metric;
+
+    if (!a || a.az == null) {
+      var n = app.visible;
+      var key = 'idle:' + n;
+      if (key === aimKey) return;
+      aimKey = key;
+      el.aim.className = 'idle';
+      el.aim.innerHTML = '<div class="aim-hint">' +
+        (n ? '하늘의 비행기를 <b>화면 한가운데</b> 에 두면 어디에서 어디로 가는지 알려 줍니다' +
+             ' <span style="color:var(--ink-3)">· 시야 안 ' + n + '대</span>'
+           : '주변에 잡히는 항공기가 없습니다') + '</div>';
+      return;
+    }
+
+    var r = Route.get(a.cs);
+    var f = Catalog.flight(a.cs);
+    var tn = Catalog.typeName(a.type);
+    var c = a.tca;
+    var key = [a.id, r ? r.from.code + r.to.code : '', Math.round(a.slantM / 200),
+               Math.round(a.el), Math.round(a.altFt || 0)].join('|');
+    if (key === aimKey) return;
+    aimKey = key;
+
+    var sub = [f ? f.airline : null, tn, a.reg].filter(Boolean).join(' · ');
+    var route = r
+      ? '<div class="aim-route"><b>' + esc(Route.label(r.from)) + '</b>' +
+        '<i>' + esc(r.from.code) + '</i><span>→</span>' +
+        '<b>' + esc(Route.label(r.to)) + '</b><i>' + esc(r.to.code) + '</i></div>'
+      : '<div class="aim-route"><b style="color:var(--ink-3);font-size:14px">' +
+        (a.cs ? '항로를 찾지 못했습니다' : '편명을 보내지 않는 항공기입니다') + '</b></div>';
+
+    el.aim.className = '';
+    el.aim.innerHTML =
+      '<div class="aim-r"><span class="aim-cs">' + esc(a.cs || a.reg || a.id.toUpperCase()) + '</span>' +
+        '<span class="aim-t">' + esc(sub) + '</span></div>' +
+      route +
+      '<div class="aim-n">' +
+        '<span>고도 <b>' + esc(Geo.fmtAlt(a.altFt, m)) + '</b></span>' +
+        '<span>거리 <b>' + esc(Geo.fmtDist(a.slantM, m)) + '</b></span>' +
+        '<span>고각 <b>' + a.el.toFixed(0) + '°</b></span>' +
+        '<span>속도 <b>' + esc(Geo.fmtSpd(a.gs, m)) + '</b></span>' +
+        (c && !c.past && !c.beyond
+          ? '<span style="color:var(--amber)">최근접 <b style="color:var(--amber)">' +
+            esc(Geo.fmtDist(c.dist, m)) + '</b> ' +
+            (c.t < 60 ? Math.round(c.t) + '초' : Math.round(c.t / 60) + '분') + ' 뒤</span>'
+          : '') +
+      '</div>';
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -106,6 +163,7 @@ var UI = (function () {
 
   /* ── 그리기 ───────────────────────────────────────────────── */
   function paint(app, force) {
+    aimBar(app);
     if (!view) return;
     var now = performance.now();
     if (!force && now - lastPaint < 220) return;      // 목록·상세는 초당 4~5회면 충분하다
@@ -381,6 +439,9 @@ var UI = (function () {
         slider('setFov', 25, 120, 1, Math.round(c.fov), '°'), 'col') +
       row('방위 보정', '나침반이 틀어져 있을 때 좌우로 밉니다',
         slider('setOff', -45, 45, 1, Math.round(c.headingOffset), '°'), 'col') +
+      row('고각 보정', '지평선이 실제와 어긋날 때 위아래로 밉니다. ' +
+        '지평선 선을 실제 지평선에 맞추면 나머지도 맞습니다',
+        slider('setTilt', -25, 25, 1, Math.round(c.tiltOffset), '°'), 'col') +
 
       '<div class="sechead">표시 범위</div>' +
       row('표시 거리', '이보다 먼 항공기는 화면에 그리지 않습니다',
@@ -462,6 +523,7 @@ var UI = (function () {
     /* 손으로 맞춘 값을 자동 추정이 덮어쓰면 보정한 보람이 없다 */
     rng('setFov', '°', function (v) { c.fov = v; c.fovAuto = false; View.setFov(v); App.save(); });
     rng('setOff', '°', function (v) { c.headingOffset = v; Orient.setOffset(v); App.save(); });
+    rng('setTilt', '°', function (v) { c.tiltOffset = v; Orient.setTilt(v); App.save(); });
     rng('setMax', ' NM', function (v) { c.maxNm = v; App.save(); });
     rng('setMinAlt', ' ft', function (v) { c.minAltFt = v; App.save(); });
     rng('setScope', ' NM', function (v) { c.scopeNm = v; App.save(); });

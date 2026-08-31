@@ -59,5 +59,7 @@
     </div>
   </div>
 
+  <div id="aim"></div>
+
   <div id="toast"></div>
 </div>

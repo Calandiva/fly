@@ -69,7 +69,8 @@ var Orient = (function () {
     heading: 0,             // 진북 기준 시계방향, 카메라(뒷면)가 보는 방향
     pitch: 0,               // 카메라 시선의 고각
     roll: 0,
-    offset: 0,              // 사용자 보정값(°)
+    offset: 0,              // 방위 보정값(°)
+    tilt: 0,                // 고각 보정값(°) — 지평선이 어긋날 때
     manual: false,          // 센서가 없어 드래그로 둘러보는 중인가
     mh: 0, mp: 12,          // 드래그 모드의 방위·고각
     tLast: 0,
@@ -182,7 +183,9 @@ var Orient = (function () {
 
   /* 월드 ENU 단위벡터 → 화면 정렬 기기좌표.
      보정 오프셋만큼 월드를 반대로 돌려 준 뒤 Rᵀ 를 적용하고,
-     마지막에 화면 회전 φ 를 더해 뷰포트 축에 맞춘다. */
+     화면 회전 φ 를 더해 뷰포트 축에 맞춘 다음, 마지막에 고각 보정을
+     화면 가로축(x) 둘레 회전으로 얹는다. 지평선이 위아래로 어긋나는 것은
+     결국 그 축에 대한 오차이기 때문. */
   function toScreenSpace(v) {
     var o = Geo.rad(-eff()), co = Math.cos(o), so = Math.sin(o);
     /* 오프셋은 위(Z)축 회전 — 방위를 offset 만큼 돌린 것과 같다 */
@@ -192,7 +195,14 @@ var Orient = (function () {
     var dy = R[0][1] * e + R[1][1] * n + R[2][1] * u;
     var dz = R[0][2] * e + R[1][2] * n + R[2][2] * u;
     var p = Geo.rad(st.screen), cp = Math.cos(p), sp = Math.sin(p);
-    return [cp * dx - sp * dy, sp * dx + cp * dy, dz];
+    var sx = cp * dx - sp * dy, sy = sp * dx + cp * dy, sz = dz;
+    if (st.tilt) {
+      var t = Geo.rad(st.tilt), ct = Math.cos(t), stt = Math.sin(t);
+      var ny = ct * sy - stt * sz;
+      var nz = stt * sy + ct * sz;
+      sy = ny; sz = nz;
+    }
+    return [sx, sy, sz];
   }
 
   function attach() {
@@ -239,7 +249,8 @@ var Orient = (function () {
   return {
     state: st, step: step, request: request, attach: attach,
     toScreenSpace: toScreenSpace, stale: stale, usable: usable, setManual: setManual,
-    setOffset: function (d) { st.offset = d; }
+    setOffset: function (d) { st.offset = d; },
+    setTilt: function (d) { st.tilt = d; }
   };
 })();
 
@@ -268,20 +279,23 @@ var View = (function () {
     }
   }
 
-  /* 방위·고각 → 화면 픽셀. 뒤쪽이면 front=false 이고 좌표는 방향만 유효하다. */
+  /* 방위·고각 → 화면 픽셀. 뒤쪽이면 front=false 이고 좌표는 방향만 유효하다.
+     sep 은 카메라 축(화면 한가운데)에서 벌어진 각도 — "지금 무엇을 겨누고
+     있는가" 를 판단하는 값이다. d 는 단위벡터이므로 cos(sep) = -d[2]. */
   function project(az, el) {
     var d = Orient.toScreenSpace(Geo.enu(az, el));
     var depth = -d[2];                                   // 카메라는 -z 방향
+    var sep = Geo.deg(Math.acos(Math.max(-1, Math.min(1, depth))));
     if (depth <= 0.0001) {
       /* 시야 뒤 — 화면 밖 지시자를 그리려고 방향만 되돌린다 */
       var m = Math.sqrt(d[0] * d[0] + d[1] * d[1]) || 1e-6;
       return { x: st.cx + (d[0] / m) * st.w, y: st.cy - (d[1] / m) * st.h,
-               front: false, depth: depth };
+               front: false, depth: depth, sep: sep };
     }
     return {
       x: st.cx + st.f * (d[0] / depth),
       y: st.cy - st.f * (d[1] / depth),
-      front: true, depth: depth
+      front: true, depth: depth, sep: sep
     };
   }
 

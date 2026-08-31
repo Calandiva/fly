@@ -425,9 +425,12 @@ var Render = (function () {
     horizon(cx, o.heading);
     compass(cx, o.heading, absolute);
 
-    var selA = sel ? Source.fleet[sel] : null;
+    /* 겨냥한 한 대에 궤적과 예상 경로를 붙인다. 선택한 것이 따로 있으면
+       그쪽이 우선 — 사람이 고른 것이 더 강한 뜻이다. */
+    var focusId = sel || opt.aimed;
+    var focusA = focusId ? Source.fleet[focusId] : null;
     var pathDx = 0;
-    if (opt.trail && selA && selA.az != null) pathDx = path(cx, selA, opt.now, metric);
+    if (opt.trail && focusA && focusA.az != null) pathDx = path(cx, focusA, opt.now, metric);
 
     var boxes = reserved.slice(), labeled = 0, offs = [];
     var maxLabels = W < 420 ? 8 : 14;
@@ -446,12 +449,15 @@ var Render = (function () {
       }
 
       var isSel = sel === a.id;
+      var isAim = opt.aimed === a.id;
+      var focus = isSel || isAim;              // 크게 보여 줄 한 대
       var near = Track.imminent(a, opt.alertM, opt.alertS);
       var col = altColor(a.altFt);
       /* 가까울수록 크게 — 2km 에서 18px, 90km 에서 6px */
       var s = 18 - 12 * Math.min(1, Math.max(0, (a.slantM - 2000) / 88000));
       var alpha = 0.45 + 0.55 * Math.min(1, Math.max(0, 1 - (a.slantM - 15000) / 130000));
-      if (isSel || near) alpha = 1;
+      if (focus || near) alpha = 1;
+      if (focus) s = Math.max(s, 16);          // 겨냥한 것은 눈에 띄게
 
       cx.save();
       cx.globalAlpha = alpha;
@@ -474,12 +480,20 @@ var Render = (function () {
         cx.beginPath(); cx.arc(p.x, p.y, s * 1.15 + 10 + ph * 9, 0, 6.2832); cx.stroke();
         cx.restore();
       }
-      if (isSel) {
+      if (focus) {
         cx.save();
-        cx.globalAlpha = 0.9; cx.strokeStyle = '#6FD8FF'; cx.lineWidth = 1.6;
-        cx.beginPath(); cx.arc(p.x, p.y, s * 1.15 + 8, 0, 6.2832); cx.stroke();
-        cx.setLineDash([3, 4]);
-        cx.beginPath(); cx.arc(p.x, p.y, s * 1.15 + 15, 0, 6.2832); cx.stroke();
+        cx.globalAlpha = 0.95; cx.strokeStyle = '#6FD8FF'; cx.lineWidth = 1.8;
+        cx.beginPath(); cx.arc(p.x, p.y, s * 1.15 + 9, 0, 6.2832); cx.stroke();
+        /* 겨냥 표시는 네 귀퉁이 괄호 — 조준하고 있다는 뜻이 분명해진다 */
+        var r = s * 1.15 + 17, arm = 7;
+        cx.setLineDash([]);
+        cx.beginPath();
+        [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(function (q) {
+          cx.moveTo(p.x + q[0] * r, p.y + q[1] * r - q[1] * arm);
+          cx.lineTo(p.x + q[0] * r, p.y + q[1] * r);
+          cx.lineTo(p.x + q[0] * r - q[0] * arm, p.y + q[1] * r);
+        });
+        cx.stroke();
         cx.restore();
       }
 
@@ -496,11 +510,11 @@ var Render = (function () {
             var ex = p.x + lx / len * draw, ey = p.y + ly / len * draw;
             casedStroke(cx, function (gg) {
               gg.beginPath(); gg.moveTo(p.x, p.y); gg.lineTo(ex, ey); gg.stroke();
-            }, isSel || near ? 1.8 : 1.2, isSel ? '#6FD8FF' : col, 0.35);
+            }, focus || near ? 1.8 : 1.2, focus ? '#6FD8FF' : col, 0.35);
             cx.save();
             cx.globalAlpha = alpha;
-            cx.fillStyle = isSel ? '#6FD8FF' : col;
-            cx.beginPath(); cx.arc(ex, ey, isSel || near ? 2.4 : 1.8, 0, 6.2832); cx.fill();
+            cx.fillStyle = focus ? '#6FD8FF' : col;
+            cx.beginPath(); cx.arc(ex, ey, focus || near ? 2.4 : 1.8, 0, 6.2832); cx.fill();
             cx.restore();
             /* 라벨이 벡터 위에 앉지 않도록 끝점 언저리를 막아 둔다 */
             boxes.push([ex - 12, ey - 10, 24, 20]);
@@ -510,9 +524,11 @@ var Render = (function () {
 
       hit.push({ id: a.id, x: p.x, y: p.y, r: Math.max(24, s * 1.4) });
 
-      /* 라벨 */
-      if (labeled >= maxLabels && !isSel) continue;
-      var L = label(a, metric, isSel || near);
+      /* 라벨. 겨냥한 한 대만 전부 펼치고 나머지는 편명 한 줄로 둔다 —
+         지평선에 늘어선 수십 대에 전부 네 줄을 붙이면 하늘이 글자로 덮인다. */
+      if (labeled >= maxLabels && !focus) continue;
+      var L = focus ? label(a, metric, true)
+                    : [a.cs || a.reg || a.id.toUpperCase()];
       var w = 0, j;
       for (j = 0; j < L.length; j++) {
         cx.font = (j === 0 ? '600 12.5px ' : '11px ') + FONT;
@@ -521,8 +537,8 @@ var Render = (function () {
       w += 14;
       var h = 10 + L.length * 12;
       /* 강조 고리가 가장 크게 부푼 상태를 기준으로 여백을 잡는다 */
-      var gap = s * 1.15 + (near ? 21 : isSel ? 17 : 10) + 6;
-      var pos = place(boxes, p.x, p.y, w, h, gap, isSel && pathDx > 0);
+      var gap = s * 1.15 + (focus ? 21 : near ? 21 : 10) + 6;
+      var pos = place(boxes, p.x, p.y, w, h, gap, focus && pathDx > 0);
       if (!pos) continue;
       boxes.push([pos[0], pos[1], w, h]);
       labeled++;
@@ -530,21 +546,21 @@ var Render = (function () {
       cx.save();
       cx.globalAlpha = Math.max(0.75, alpha);
       /* 지시선 */
-      cx.strokeStyle = isSel ? 'rgba(111,216,255,.75)' : 'rgba(95,227,161,.45)';
+      cx.strokeStyle = focus ? 'rgba(111,216,255,.75)' : 'rgba(95,227,161,.4)';
       cx.lineWidth = 1;
       cx.beginPath();
       cx.moveTo(p.x, p.y);
       cx.lineTo(pos[0] < p.x ? pos[0] + w : pos[0], pos[1] + h / 2);
       cx.stroke();
 
-      cx.fillStyle = 'rgba(6,12,10,.72)';
-      cx.strokeStyle = isSel ? 'rgba(111,216,255,.65)' : 'rgba(95,227,161,.28)';
+      cx.fillStyle = focus ? 'rgba(6,14,20,.82)' : 'rgba(6,12,10,.62)';
+      cx.strokeStyle = focus ? 'rgba(111,216,255,.7)' : 'rgba(95,227,161,.24)';
       roundRect(cx, pos[0], pos[1], w, h, 6);
       cx.fill(); cx.stroke();
 
       cx.textAlign = 'left'; cx.textBaseline = 'middle';
       cx.font = '600 12.5px ' + FONT;
-      cx.fillStyle = isSel ? '#BFEEFF' : '#EAF4EF';
+      cx.fillStyle = focus ? '#BFEEFF' : '#EAF4EF';
       cx.fillText(L[0], pos[0] + 7, pos[1] + 12);
       cx.font = '11px ' + FONT;
       for (var li = 1; li < L.length; li++) {
@@ -682,7 +698,7 @@ var Render = (function () {
       var a = list[i];
       if (a.distM > rangeM) continue;
       if (a.altFt != null && a.altFt < opt.minAltFt) continue;
-      var isSel = opt.selected === a.id;
+      var isSel = opt.selected === a.id || opt.aimed === a.id;
       if (!opt.showGround && !a.airborne) continue;
       var tr = a.trail;
       if (!tr || tr.length < 2) continue;
@@ -703,7 +719,7 @@ var Render = (function () {
       if (a2.distM > rangeM) continue;
       if (a2.altFt != null && a2.altFt < opt.minAltFt) continue;
       if (!opt.showGround && !a2.airborne) continue;
-      var sel2 = opt.selected === a2.id;
+      var sel2 = opt.selected === a2.id || opt.aimed === a2.id;
       var near2 = Track.imminent(a2, opt.alertM, opt.alertS);
       var xy = pol(a2.az, a2.distM), x = xy[0], y = xy[1];
 

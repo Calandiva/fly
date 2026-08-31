@@ -303,6 +303,36 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border:3px solid #061
 #gateBtns .btn{flex:1;min-height:44px;font-size:14px}
 #gateNote{margin-top:12px;font-size:11px;color:var(--ink-3);line-height:1.6;text-align:center}
 
+/* ── 겨냥 바 — 화면 한가운데에 둔 항공기 ──────────── */
+#aim{
+  position:absolute;left:calc(8px + var(--safe-l));right:calc(8px + var(--safe-r));
+  bottom:calc(8px + var(--safe-b));z-index:22;
+  padding:10px 13px;border-radius:var(--r);
+  background:rgba(6,14,20,.86);border:1px solid rgba(111,216,255,.34);
+  backdrop-filter:blur(14px) saturate(1.3);-webkit-backdrop-filter:blur(14px) saturate(1.3);
+  box-shadow:0 8px 30px rgba(0,0,0,.55);
+  transition:opacity .18s, transform .18s;
+}
+#aim.idle{background:var(--panel);border-color:var(--line)}
+#aim.hide{opacity:0;transform:translateY(8px);pointer-events:none}
+#stage.sheet #aim{display:none}
+.aim-r{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.aim-cs{font-family:var(--mono);font-size:16px;font-weight:700;letter-spacing:.01em;color:var(--sel)}
+.aim-t{font-size:11.5px;color:var(--ink-2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aim-route{display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap}
+.aim-route b{font-size:17px;font-weight:600;color:#DCF3FF;letter-spacing:-.2px}
+.aim-route span{font-size:14px;color:var(--sel-2)}
+.aim-route i{font-style:normal;font-family:var(--mono);font-size:10px;color:var(--ink-3)}
+.aim-n{display:flex;gap:12px;margin-top:6px;flex-wrap:wrap}
+.aim-n span{font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
+.aim-n span b{color:var(--ink);font-weight:600}
+.aim-hint{font-size:12.5px;color:var(--ink-2);line-height:1.5}
+.aim-hint b{color:var(--hud);font-weight:600}
+@media (max-width:420px){ .aim-route b{font-size:15.5px} .aim-cs{font-size:15px} }
+
+/* 겨냥 바가 아래를 차지하므로 스코프를 그만큼 올린다 */
+#scope{bottom:calc(104px + var(--safe-b))}
+
 /* ── 토스트 ───────────────────────────────────────── */
 #toast{
   position:absolute;left:50%;transform:translateX(-50%);
@@ -390,6 +420,8 @@ svg{display:block}
       <div id="gateNote">항공기 위치는 공개 ADS-B 네트워크에서 받아옵니다. 실제 관제용으로 쓸 수 없습니다.</div>
     </div>
   </div>
+
+  <div id="aim"></div>
 
   <div id="toast"></div>
 </div>
@@ -934,7 +966,8 @@ var Orient = (function () {
     heading: 0,             // 진북 기준 시계방향, 카메라(뒷면)가 보는 방향
     pitch: 0,               // 카메라 시선의 고각
     roll: 0,
-    offset: 0,              // 사용자 보정값(°)
+    offset: 0,              // 방위 보정값(°)
+    tilt: 0,                // 고각 보정값(°) — 지평선이 어긋날 때
     manual: false,          // 센서가 없어 드래그로 둘러보는 중인가
     mh: 0, mp: 12,          // 드래그 모드의 방위·고각
     tLast: 0,
@@ -1047,7 +1080,9 @@ var Orient = (function () {
 
   /* 월드 ENU 단위벡터 → 화면 정렬 기기좌표.
      보정 오프셋만큼 월드를 반대로 돌려 준 뒤 Rᵀ 를 적용하고,
-     마지막에 화면 회전 φ 를 더해 뷰포트 축에 맞춘다. */
+     화면 회전 φ 를 더해 뷰포트 축에 맞춘 다음, 마지막에 고각 보정을
+     화면 가로축(x) 둘레 회전으로 얹는다. 지평선이 위아래로 어긋나는 것은
+     결국 그 축에 대한 오차이기 때문. */
   function toScreenSpace(v) {
     var o = Geo.rad(-eff()), co = Math.cos(o), so = Math.sin(o);
     /* 오프셋은 위(Z)축 회전 — 방위를 offset 만큼 돌린 것과 같다 */
@@ -1057,7 +1092,14 @@ var Orient = (function () {
     var dy = R[0][1] * e + R[1][1] * n + R[2][1] * u;
     var dz = R[0][2] * e + R[1][2] * n + R[2][2] * u;
     var p = Geo.rad(st.screen), cp = Math.cos(p), sp = Math.sin(p);
-    return [cp * dx - sp * dy, sp * dx + cp * dy, dz];
+    var sx = cp * dx - sp * dy, sy = sp * dx + cp * dy, sz = dz;
+    if (st.tilt) {
+      var t = Geo.rad(st.tilt), ct = Math.cos(t), stt = Math.sin(t);
+      var ny = ct * sy - stt * sz;
+      var nz = stt * sy + ct * sz;
+      sy = ny; sz = nz;
+    }
+    return [sx, sy, sz];
   }
 
   function attach() {
@@ -1104,7 +1146,8 @@ var Orient = (function () {
   return {
     state: st, step: step, request: request, attach: attach,
     toScreenSpace: toScreenSpace, stale: stale, usable: usable, setManual: setManual,
-    setOffset: function (d) { st.offset = d; }
+    setOffset: function (d) { st.offset = d; },
+    setTilt: function (d) { st.tilt = d; }
   };
 })();
 
@@ -1133,20 +1176,23 @@ var View = (function () {
     }
   }
 
-  /* 방위·고각 → 화면 픽셀. 뒤쪽이면 front=false 이고 좌표는 방향만 유효하다. */
+  /* 방위·고각 → 화면 픽셀. 뒤쪽이면 front=false 이고 좌표는 방향만 유효하다.
+     sep 은 카메라 축(화면 한가운데)에서 벌어진 각도 — "지금 무엇을 겨누고
+     있는가" 를 판단하는 값이다. d 는 단위벡터이므로 cos(sep) = -d[2]. */
   function project(az, el) {
     var d = Orient.toScreenSpace(Geo.enu(az, el));
     var depth = -d[2];                                   // 카메라는 -z 방향
+    var sep = Geo.deg(Math.acos(Math.max(-1, Math.min(1, depth))));
     if (depth <= 0.0001) {
       /* 시야 뒤 — 화면 밖 지시자를 그리려고 방향만 되돌린다 */
       var m = Math.sqrt(d[0] * d[0] + d[1] * d[1]) || 1e-6;
       return { x: st.cx + (d[0] / m) * st.w, y: st.cy - (d[1] / m) * st.h,
-               front: false, depth: depth };
+               front: false, depth: depth, sep: sep };
     }
     return {
       x: st.cx + st.f * (d[0] / depth),
       y: st.cy - st.f * (d[1] / depth),
-      front: true, depth: depth
+      front: true, depth: depth, sep: sep
     };
   }
 
@@ -2845,9 +2891,12 @@ var Render = (function () {
     horizon(cx, o.heading);
     compass(cx, o.heading, absolute);
 
-    var selA = sel ? Source.fleet[sel] : null;
+    /* 겨냥한 한 대에 궤적과 예상 경로를 붙인다. 선택한 것이 따로 있으면
+       그쪽이 우선 — 사람이 고른 것이 더 강한 뜻이다. */
+    var focusId = sel || opt.aimed;
+    var focusA = focusId ? Source.fleet[focusId] : null;
     var pathDx = 0;
-    if (opt.trail && selA && selA.az != null) pathDx = path(cx, selA, opt.now, metric);
+    if (opt.trail && focusA && focusA.az != null) pathDx = path(cx, focusA, opt.now, metric);
 
     var boxes = reserved.slice(), labeled = 0, offs = [];
     var maxLabels = W < 420 ? 8 : 14;
@@ -2866,12 +2915,15 @@ var Render = (function () {
       }
 
       var isSel = sel === a.id;
+      var isAim = opt.aimed === a.id;
+      var focus = isSel || isAim;              // 크게 보여 줄 한 대
       var near = Track.imminent(a, opt.alertM, opt.alertS);
       var col = altColor(a.altFt);
       /* 가까울수록 크게 — 2km 에서 18px, 90km 에서 6px */
       var s = 18 - 12 * Math.min(1, Math.max(0, (a.slantM - 2000) / 88000));
       var alpha = 0.45 + 0.55 * Math.min(1, Math.max(0, 1 - (a.slantM - 15000) / 130000));
-      if (isSel || near) alpha = 1;
+      if (focus || near) alpha = 1;
+      if (focus) s = Math.max(s, 16);          // 겨냥한 것은 눈에 띄게
 
       cx.save();
       cx.globalAlpha = alpha;
@@ -2894,12 +2946,20 @@ var Render = (function () {
         cx.beginPath(); cx.arc(p.x, p.y, s * 1.15 + 10 + ph * 9, 0, 6.2832); cx.stroke();
         cx.restore();
       }
-      if (isSel) {
+      if (focus) {
         cx.save();
-        cx.globalAlpha = 0.9; cx.strokeStyle = '#6FD8FF'; cx.lineWidth = 1.6;
-        cx.beginPath(); cx.arc(p.x, p.y, s * 1.15 + 8, 0, 6.2832); cx.stroke();
-        cx.setLineDash([3, 4]);
-        cx.beginPath(); cx.arc(p.x, p.y, s * 1.15 + 15, 0, 6.2832); cx.stroke();
+        cx.globalAlpha = 0.95; cx.strokeStyle = '#6FD8FF'; cx.lineWidth = 1.8;
+        cx.beginPath(); cx.arc(p.x, p.y, s * 1.15 + 9, 0, 6.2832); cx.stroke();
+        /* 겨냥 표시는 네 귀퉁이 괄호 — 조준하고 있다는 뜻이 분명해진다 */
+        var r = s * 1.15 + 17, arm = 7;
+        cx.setLineDash([]);
+        cx.beginPath();
+        [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(function (q) {
+          cx.moveTo(p.x + q[0] * r, p.y + q[1] * r - q[1] * arm);
+          cx.lineTo(p.x + q[0] * r, p.y + q[1] * r);
+          cx.lineTo(p.x + q[0] * r - q[0] * arm, p.y + q[1] * r);
+        });
+        cx.stroke();
         cx.restore();
       }
 
@@ -2916,11 +2976,11 @@ var Render = (function () {
             var ex = p.x + lx / len * draw, ey = p.y + ly / len * draw;
             casedStroke(cx, function (gg) {
               gg.beginPath(); gg.moveTo(p.x, p.y); gg.lineTo(ex, ey); gg.stroke();
-            }, isSel || near ? 1.8 : 1.2, isSel ? '#6FD8FF' : col, 0.35);
+            }, focus || near ? 1.8 : 1.2, focus ? '#6FD8FF' : col, 0.35);
             cx.save();
             cx.globalAlpha = alpha;
-            cx.fillStyle = isSel ? '#6FD8FF' : col;
-            cx.beginPath(); cx.arc(ex, ey, isSel || near ? 2.4 : 1.8, 0, 6.2832); cx.fill();
+            cx.fillStyle = focus ? '#6FD8FF' : col;
+            cx.beginPath(); cx.arc(ex, ey, focus || near ? 2.4 : 1.8, 0, 6.2832); cx.fill();
             cx.restore();
             /* 라벨이 벡터 위에 앉지 않도록 끝점 언저리를 막아 둔다 */
             boxes.push([ex - 12, ey - 10, 24, 20]);
@@ -2930,9 +2990,11 @@ var Render = (function () {
 
       hit.push({ id: a.id, x: p.x, y: p.y, r: Math.max(24, s * 1.4) });
 
-      /* 라벨 */
-      if (labeled >= maxLabels && !isSel) continue;
-      var L = label(a, metric, isSel || near);
+      /* 라벨. 겨냥한 한 대만 전부 펼치고 나머지는 편명 한 줄로 둔다 —
+         지평선에 늘어선 수십 대에 전부 네 줄을 붙이면 하늘이 글자로 덮인다. */
+      if (labeled >= maxLabels && !focus) continue;
+      var L = focus ? label(a, metric, true)
+                    : [a.cs || a.reg || a.id.toUpperCase()];
       var w = 0, j;
       for (j = 0; j < L.length; j++) {
         cx.font = (j === 0 ? '600 12.5px ' : '11px ') + FONT;
@@ -2941,8 +3003,8 @@ var Render = (function () {
       w += 14;
       var h = 10 + L.length * 12;
       /* 강조 고리가 가장 크게 부푼 상태를 기준으로 여백을 잡는다 */
-      var gap = s * 1.15 + (near ? 21 : isSel ? 17 : 10) + 6;
-      var pos = place(boxes, p.x, p.y, w, h, gap, isSel && pathDx > 0);
+      var gap = s * 1.15 + (focus ? 21 : near ? 21 : 10) + 6;
+      var pos = place(boxes, p.x, p.y, w, h, gap, focus && pathDx > 0);
       if (!pos) continue;
       boxes.push([pos[0], pos[1], w, h]);
       labeled++;
@@ -2950,21 +3012,21 @@ var Render = (function () {
       cx.save();
       cx.globalAlpha = Math.max(0.75, alpha);
       /* 지시선 */
-      cx.strokeStyle = isSel ? 'rgba(111,216,255,.75)' : 'rgba(95,227,161,.45)';
+      cx.strokeStyle = focus ? 'rgba(111,216,255,.75)' : 'rgba(95,227,161,.4)';
       cx.lineWidth = 1;
       cx.beginPath();
       cx.moveTo(p.x, p.y);
       cx.lineTo(pos[0] < p.x ? pos[0] + w : pos[0], pos[1] + h / 2);
       cx.stroke();
 
-      cx.fillStyle = 'rgba(6,12,10,.72)';
-      cx.strokeStyle = isSel ? 'rgba(111,216,255,.65)' : 'rgba(95,227,161,.28)';
+      cx.fillStyle = focus ? 'rgba(6,14,20,.82)' : 'rgba(6,12,10,.62)';
+      cx.strokeStyle = focus ? 'rgba(111,216,255,.7)' : 'rgba(95,227,161,.24)';
       roundRect(cx, pos[0], pos[1], w, h, 6);
       cx.fill(); cx.stroke();
 
       cx.textAlign = 'left'; cx.textBaseline = 'middle';
       cx.font = '600 12.5px ' + FONT;
-      cx.fillStyle = isSel ? '#BFEEFF' : '#EAF4EF';
+      cx.fillStyle = focus ? '#BFEEFF' : '#EAF4EF';
       cx.fillText(L[0], pos[0] + 7, pos[1] + 12);
       cx.font = '11px ' + FONT;
       for (var li = 1; li < L.length; li++) {
@@ -3102,7 +3164,7 @@ var Render = (function () {
       var a = list[i];
       if (a.distM > rangeM) continue;
       if (a.altFt != null && a.altFt < opt.minAltFt) continue;
-      var isSel = opt.selected === a.id;
+      var isSel = opt.selected === a.id || opt.aimed === a.id;
       if (!opt.showGround && !a.airborne) continue;
       var tr = a.trail;
       if (!tr || tr.length < 2) continue;
@@ -3123,7 +3185,7 @@ var Render = (function () {
       if (a2.distM > rangeM) continue;
       if (a2.altFt != null && a2.altFt < opt.minAltFt) continue;
       if (!opt.showGround && !a2.airborne) continue;
-      var sel2 = opt.selected === a2.id;
+      var sel2 = opt.selected === a2.id || opt.aimed === a2.id;
       var near2 = Track.imminent(a2, opt.alertM, opt.alertS);
       var xy = pol(a2.az, a2.distM), x = xy[0], y = xy[1];
 
@@ -3191,7 +3253,7 @@ var UI = (function () {
   function init() {
     el.stage = $('#stage'); el.sheet = $('#sheet'); el.body = $('#sheetBody');
     el.title = $('#sheetTitle'); el.tools = $('#sheetTools'); el.stat = $('#stat');
-    el.toast = $('#toast');
+    el.toast = $('#toast'); el.aim = $('#aim');
   }
 
   /* ── 토스트 ───────────────────────────────────────────────── */
@@ -3257,6 +3319,63 @@ var UI = (function () {
     }).join('');
   }
 
+  /* ── 겨냥 바 ──────────────────────────────────────────────
+     이 앱을 쓰는 순간은 "저 비행기 뭐지" 다. 화면 한가운데에 둔 한 대의
+     출발·도착을 가장 크게, 나머지 수치는 그 아래 한 줄로. */
+  var aimKey = '';
+  function aimBar(app) {
+    if (!el.aim) return;
+    var a = app.byId(app.aimed);
+    var m = app.metric;
+
+    if (!a || a.az == null) {
+      var n = app.visible;
+      var key = 'idle:' + n;
+      if (key === aimKey) return;
+      aimKey = key;
+      el.aim.className = 'idle';
+      el.aim.innerHTML = '<div class="aim-hint">' +
+        (n ? '하늘의 비행기를 <b>화면 한가운데</b> 에 두면 어디에서 어디로 가는지 알려 줍니다' +
+             ' <span style="color:var(--ink-3)">· 시야 안 ' + n + '대</span>'
+           : '주변에 잡히는 항공기가 없습니다') + '</div>';
+      return;
+    }
+
+    var r = Route.get(a.cs);
+    var f = Catalog.flight(a.cs);
+    var tn = Catalog.typeName(a.type);
+    var c = a.tca;
+    var key = [a.id, r ? r.from.code + r.to.code : '', Math.round(a.slantM / 200),
+               Math.round(a.el), Math.round(a.altFt || 0)].join('|');
+    if (key === aimKey) return;
+    aimKey = key;
+
+    var sub = [f ? f.airline : null, tn, a.reg].filter(Boolean).join(' · ');
+    var route = r
+      ? '<div class="aim-route"><b>' + esc(Route.label(r.from)) + '</b>' +
+        '<i>' + esc(r.from.code) + '</i><span>→</span>' +
+        '<b>' + esc(Route.label(r.to)) + '</b><i>' + esc(r.to.code) + '</i></div>'
+      : '<div class="aim-route"><b style="color:var(--ink-3);font-size:14px">' +
+        (a.cs ? '항로를 찾지 못했습니다' : '편명을 보내지 않는 항공기입니다') + '</b></div>';
+
+    el.aim.className = '';
+    el.aim.innerHTML =
+      '<div class="aim-r"><span class="aim-cs">' + esc(a.cs || a.reg || a.id.toUpperCase()) + '</span>' +
+        '<span class="aim-t">' + esc(sub) + '</span></div>' +
+      route +
+      '<div class="aim-n">' +
+        '<span>고도 <b>' + esc(Geo.fmtAlt(a.altFt, m)) + '</b></span>' +
+        '<span>거리 <b>' + esc(Geo.fmtDist(a.slantM, m)) + '</b></span>' +
+        '<span>고각 <b>' + a.el.toFixed(0) + '°</b></span>' +
+        '<span>속도 <b>' + esc(Geo.fmtSpd(a.gs, m)) + '</b></span>' +
+        (c && !c.past && !c.beyond
+          ? '<span style="color:var(--amber)">최근접 <b style="color:var(--amber)">' +
+            esc(Geo.fmtDist(c.dist, m)) + '</b> ' +
+            (c.t < 60 ? Math.round(c.t) + '초' : Math.round(c.t / 60) + '분') + ' 뒤</span>'
+          : '') +
+      '</div>';
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -3286,6 +3405,7 @@ var UI = (function () {
 
   /* ── 그리기 ───────────────────────────────────────────────── */
   function paint(app, force) {
+    aimBar(app);
     if (!view) return;
     var now = performance.now();
     if (!force && now - lastPaint < 220) return;      // 목록·상세는 초당 4~5회면 충분하다
@@ -3561,6 +3681,9 @@ var UI = (function () {
         slider('setFov', 25, 120, 1, Math.round(c.fov), '°'), 'col') +
       row('방위 보정', '나침반이 틀어져 있을 때 좌우로 밉니다',
         slider('setOff', -45, 45, 1, Math.round(c.headingOffset), '°'), 'col') +
+      row('고각 보정', '지평선이 실제와 어긋날 때 위아래로 밉니다. ' +
+        '지평선 선을 실제 지평선에 맞추면 나머지도 맞습니다',
+        slider('setTilt', -25, 25, 1, Math.round(c.tiltOffset), '°'), 'col') +
 
       '<div class="sechead">표시 범위</div>' +
       row('표시 거리', '이보다 먼 항공기는 화면에 그리지 않습니다',
@@ -3642,6 +3765,7 @@ var UI = (function () {
     /* 손으로 맞춘 값을 자동 추정이 덮어쓰면 보정한 보람이 없다 */
     rng('setFov', '°', function (v) { c.fov = v; c.fovAuto = false; View.setFov(v); App.save(); });
     rng('setOff', '°', function (v) { c.headingOffset = v; Orient.setOffset(v); App.save(); });
+    rng('setTilt', '°', function (v) { c.tiltOffset = v; Orient.setTilt(v); App.save(); });
     rng('setMax', ' NM', function (v) { c.maxNm = v; App.save(); });
     rng('setMinAlt', ' ft', function (v) { c.minAltFt = v; App.save(); });
     rng('setScope', ' NM', function (v) { c.scopeNm = v; App.save(); });
@@ -3823,7 +3947,7 @@ var App = (function () {
 
   /* 빌드 표시 — build.py 가 채워 넣는다. 배포된 것이 어느 빌드인지
      화면에서 바로 확인할 수 있어야 "올리긴 했나" 를 두고 헤매지 않는다. */
-  var BUILD = '2026-08-31 00:00 3fe43a53';
+  var BUILD = '2026-08-31 00:15 b832c7fd';
 
   var cfg = {
     metric: true,
@@ -3840,6 +3964,7 @@ var App = (function () {
     demo: false,
     fov: 67, fovAuto: true,
     headingOffset: 0,
+    tiltOffset: 0,          // 고각 보정 — 지평선이 어긋날 때
     maxNm: 60,              // AR 은 이보다 멀면 전부 지평선에 붙는다
     minAltFt: 0,
     scopeNm: 40,
@@ -3855,6 +3980,7 @@ var App = (function () {
     list: [],
     visible: 0,
     selected: null,
+    aimed: null,            // 지금 화면 한가운데에 둔 항공기
     started: false,
     get metric() { return cfg.metric; },
     byId: function (id) { return id ? (Source.fleet[id] || null) : null; }
@@ -3993,6 +4119,39 @@ var App = (function () {
     save();
   }
 
+  /* ── 겨냥 ──────────────────────────────────────────────────
+     이 앱의 쓰임은 "하늘에 보이는 저 비행기가 뭐지" 다. 그러니 화면
+     한가운데에 둔 한 대를 붙잡아 그 한 대의 정보를 크게 보여 준다.
+
+     붙잡은 것은 웬만하면 놓지 않는다 — 손이 조금 흔들릴 때마다 대상이
+     바뀌면 읽을 수가 없다. */
+  var AIM_DEG = 14;         // 이 안에 들어와야 겨냥으로 친다
+  var HOLD_DEG = 22;        // 한 번 잡으면 여기까지는 놓지 않는다
+  var STICKY = 1.5;         // 다른 것이 이만큼 더 가까워야 갈아탄다
+
+  function pickAim(list) {
+    var maxM = Geo.nmToM(cfg.maxNm);
+    var best = null, bestSep = 1e9, held = null;
+    for (var i = 0; i < list.length; i++) {
+      var a = list[i];
+      if (a.slantM > maxM) break;
+      if (!cfg.showGround && !a.airborne) continue;
+      if (a.altFt != null && a.altFt < cfg.minAltFt) continue;
+      var p = View.project(a.az, a.el);
+      if (!p.front) continue;
+      a._sep = p.sep;
+      if (a.id === state.aimed) held = a;
+      if (p.sep < bestSep) { bestSep = p.sep; best = a; }
+    }
+    /* 붙잡고 있던 것이 아직 시야에 있고, 새 후보가 압도적으로 가깝지
+       않으면 그대로 둔다 */
+    if (held && held._sep <= HOLD_DEG &&
+        (!best || best.id === held.id || held._sep <= best._sep * STICKY)) {
+      return held.id;
+    }
+    return (best && bestSep <= AIM_DEG) ? best.id : null;
+  }
+
   function select(id) {
     state.selected = id;
     UI.paint(state, true);
@@ -4007,6 +4166,7 @@ var App = (function () {
     Orient.step(dt);
     var list = Source.advance(Date.now(), dt);
     state.list = list;
+    state.aimed = pickAim(list);
 
     /* 화면 필터를 통과한 대수 */
     var maxM = Geo.nmToM(cfg.maxNm), n = 0;
@@ -4024,6 +4184,7 @@ var App = (function () {
       maxNm: cfg.maxNm, minAltFt: cfg.minAltFt,
       scopeNm: cfg.scopeNm, headingUp: cfg.headingUp,
       trail: cfg.trail, synth: !Camera.state.on, showGround: cfg.showGround,
+      aimed: state.aimed,
       alertM: cfg.alertKm * 1000, alertS: cfg.alertMin * 60
     });
 
@@ -4264,6 +4425,7 @@ var App = (function () {
     Render.resize();
     View.setFov(cfg.fov);
     Orient.setOffset(cfg.headingOffset);
+    Orient.setTilt(cfg.tiltOffset);
     Orient.setManual(0, 12);             // 센서가 붙기 전까지의 기본 시선
     Source.setRadius(cfg.radiusNm);
     Source.setInterval(cfg.intervalMs);

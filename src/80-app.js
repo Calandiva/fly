@@ -23,6 +23,7 @@ var App = (function () {
     demo: false,
     fov: 67, fovAuto: true,
     headingOffset: 0,
+    tiltOffset: 0,          // 고각 보정 — 지평선이 어긋날 때
     maxNm: 60,              // AR 은 이보다 멀면 전부 지평선에 붙는다
     minAltFt: 0,
     scopeNm: 40,
@@ -38,6 +39,7 @@ var App = (function () {
     list: [],
     visible: 0,
     selected: null,
+    aimed: null,            // 지금 화면 한가운데에 둔 항공기
     started: false,
     get metric() { return cfg.metric; },
     byId: function (id) { return id ? (Source.fleet[id] || null) : null; }
@@ -176,6 +178,39 @@ var App = (function () {
     save();
   }
 
+  /* ── 겨냥 ──────────────────────────────────────────────────
+     이 앱의 쓰임은 "하늘에 보이는 저 비행기가 뭐지" 다. 그러니 화면
+     한가운데에 둔 한 대를 붙잡아 그 한 대의 정보를 크게 보여 준다.
+
+     붙잡은 것은 웬만하면 놓지 않는다 — 손이 조금 흔들릴 때마다 대상이
+     바뀌면 읽을 수가 없다. */
+  var AIM_DEG = 14;         // 이 안에 들어와야 겨냥으로 친다
+  var HOLD_DEG = 22;        // 한 번 잡으면 여기까지는 놓지 않는다
+  var STICKY = 1.5;         // 다른 것이 이만큼 더 가까워야 갈아탄다
+
+  function pickAim(list) {
+    var maxM = Geo.nmToM(cfg.maxNm);
+    var best = null, bestSep = 1e9, held = null;
+    for (var i = 0; i < list.length; i++) {
+      var a = list[i];
+      if (a.slantM > maxM) break;
+      if (!cfg.showGround && !a.airborne) continue;
+      if (a.altFt != null && a.altFt < cfg.minAltFt) continue;
+      var p = View.project(a.az, a.el);
+      if (!p.front) continue;
+      a._sep = p.sep;
+      if (a.id === state.aimed) held = a;
+      if (p.sep < bestSep) { bestSep = p.sep; best = a; }
+    }
+    /* 붙잡고 있던 것이 아직 시야에 있고, 새 후보가 압도적으로 가깝지
+       않으면 그대로 둔다 */
+    if (held && held._sep <= HOLD_DEG &&
+        (!best || best.id === held.id || held._sep <= best._sep * STICKY)) {
+      return held.id;
+    }
+    return (best && bestSep <= AIM_DEG) ? best.id : null;
+  }
+
   function select(id) {
     state.selected = id;
     UI.paint(state, true);
@@ -190,6 +225,7 @@ var App = (function () {
     Orient.step(dt);
     var list = Source.advance(Date.now(), dt);
     state.list = list;
+    state.aimed = pickAim(list);
 
     /* 화면 필터를 통과한 대수 */
     var maxM = Geo.nmToM(cfg.maxNm), n = 0;
@@ -207,6 +243,7 @@ var App = (function () {
       maxNm: cfg.maxNm, minAltFt: cfg.minAltFt,
       scopeNm: cfg.scopeNm, headingUp: cfg.headingUp,
       trail: cfg.trail, synth: !Camera.state.on, showGround: cfg.showGround,
+      aimed: state.aimed,
       alertM: cfg.alertKm * 1000, alertS: cfg.alertMin * 60
     });
 
@@ -447,6 +484,7 @@ var App = (function () {
     Render.resize();
     View.setFov(cfg.fov);
     Orient.setOffset(cfg.headingOffset);
+    Orient.setTilt(cfg.tiltOffset);
     Orient.setManual(0, 12);             // 센서가 붙기 전까지의 기본 시선
     Source.setRadius(cfg.radiusNm);
     Source.setInterval(cfg.intervalMs);
